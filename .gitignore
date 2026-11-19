@@ -1,0 +1,14 @@
+node_modules/
+*.sqlite*
+.DS_Store
+test-results/
+playwright-report/
+.env*
+.npmrc
+.service-secret
+reference.bin
+reference-*.bin
+reference-state.json
+reference-state.json.tmp
+settings.json
+plugins.yml

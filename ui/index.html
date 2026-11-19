@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模型质量</title>
+  <!--TOKEN-->
+  <link rel="stylesheet" href="style.css">
+  <script src="theme.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav class="tabs" role="tablist" aria-label="模型质量">
+      <button id="tab-history" role="tab" aria-selected="true" aria-controls="history-panel" data-tab="history">历史记录</button>
+      <button id="tab-settings" role="tab" aria-selected="false" aria-controls="settings-panel" data-tab="settings" tabindex="-1">设置</button>
+    </nav>
+    <div id="notice" role="alert" hidden></div>
+    <section id="history-panel" role="tabpanel" aria-labelledby="tab-history">
+      <div class="history-context">
+        <div class="context-controls"><div class="model-picker"><span id="model-picker-label">监测模型</span><button id="history-model" class="model-select" aria-label="历史模型" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-options" popovertarget="model-menu"><span id="selected-model-label">暂无模型</span><svg class="select-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div>
+        <div class="test-switch" role="group" aria-label="检测类型"><button data-test="milk" aria-pressed="true">奶牛推理</button><button data-test="fingerprint" aria-pressed="false">模型指纹</button></div>
+        <div class="actions"><button id="history-run" class="primary">测试奶牛推理</button><button id="history-more" aria-label="更多历史操作" popovertarget="history-menu">更多 <span aria-hidden="true">⋯</span></button></div></div>
+        <div class="context-meta"><span id="selected-model-id" class="mono small muted"></span><span id="plan-summary" class="small muted"></span></div>
+      </div>
+      <div id="model-menu" popover="auto"><div class="model-menu-heading">切换监测模型</div><div id="model-options" role="listbox" aria-labelledby="model-picker-label" tabindex="-1"></div></div>
+      <div id="history-menu" popover="auto"><button id="clear-history" class="danger plain">清空历史</button></div>
+      <div id="history-summary" class="history-summary" hidden></div>
+      <div id="history-empty" class="empty" hidden><h2>还没有测试记录</h2><p>先在设置中添加模型，再开始第一次测试。</p><button data-tab="settings">添加模型</button></div>
+      <div id="history-content" hidden>
+        <div id="milk-history">
+        <div class="section-heading"><h2>最近 30 天</h2><span id="timezone" class="muted small"></span></div>
+        <p class="muted small heatmap-hint">横向滚动查看日期 · 悬停或聚焦查看数量 · 点击筛选</p>
+        <div id="heatmap" class="heatmap-scroll"></div><div id="heat-tooltip" class="heat-tooltip" role="tooltip" hidden></div>
+        <div class="legend"><span><i class="passed"></i>全部通过</span><span><i class="failed"></i>存在未通过</span><span><i class="error"></i>异常 / 无法判定</span><span><i class="empty-cell"></i>无记录</span></div>
+        <p class="muted small aggregation-note">每格汇总一个时段，存在未通过时优先标红；橙色表示存在调用异常或无法判定。</p>
+        <div class="slot-filter"><label>日期 <input id="filter-day" type="date"></label><label>时段 <span class="slot-select"><select id="filter-slot"><option value="0">00:00–06:00</option><option value="1">06:00–12:00</option><option value="2">12:00–18:00</option><option value="3">18:00–24:00</option></select><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></label><button id="apply-filter">筛选时段</button></div>
+        <div class="section-heading records-heading"><h2>测试记录</h2><button id="reset-filter" class="plain" hidden>取消时段筛选</button></div>
+        <p id="filter-description" class="muted small"></p>
+        <div class="table-scroll"><table><thead><tr><th>时间</th><th>结果</th><th>耗时</th><th>触发方式</th><th></th></tr></thead><tbody id="records"></tbody></table></div>
+        </div>
+        <div id="fingerprint-history" hidden><section class="fingerprint-overview" aria-labelledby="overview-title"><div class="section-heading"><div><h2 id="overview-title">候选随时间分布</h2><p class="muted small">圆点表示完整评分，菱形表示部分排名；数字点可展开多轮观测，空白不推断模型身份。</p></div><div class="overview-ranges" role="group" aria-label="指纹汇总范围"><button data-overview-days="1" aria-pressed="false">24 小时</button><button data-overview-days="7" aria-pressed="true">7 天</button><button data-overview-days="30" aria-pressed="false">30 天</button></div></div><p id="overview-description" class="muted small"></p><div id="overview-chart" class="overview-chart"></div><div class="overview-legend muted small"><span><i class="overview-symbol scored"></i>完整评分</span><span><i class="overview-symbol partial"></i>部分排名</span><span><i class="overview-symbol unavailable"></i>异常／无候选</span><span>↻ 参考库更新</span><span>◇ SDK 更新</span></div><p id="overview-limit" class="muted small" hidden></p></section><div class="section-heading"><h2>指纹时间线</h2><span class="muted small">概率仅针对参考库候选</span></div><div class="timeline-controls"><label><input id="changes-only" type="checkbox"> 仅看变化</label><label><input id="group-candidates" type="checkbox"> 合并本页相同候选</label><span class="muted small">候选变化与参考库更新 · 每页 20 条原始记录</span></div><div id="timeline"></div></div>
+        <div class="pagination"><span id="page-info" class="muted small"></span><div><button id="previous">上一页</button><button id="next">下一页</button></div></div>
+      </div>
+    </section>
+    <section id="settings-panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <div class="section-heading"><div><h2>监测模型</h2><p class="muted small">这里是待检测的通道模型；每个模型分别设置奶牛与指纹计划，修改后自动保存。</p></div><button id="add-model" class="primary">＋ 添加模型</button></div>
+      <p id="catalog-status" class="muted small"></p>
+      <div id="settings-list"></div>
+      <section class="bank-settings"><div class="section-heading"><div><h2>指纹参考库</h2><p class="muted small">用于比较候选模型的参考数据，与上方待检测模型列表独立。下载后每天检查更新。</p></div><button id="update-bank">更新参考库</button></div><div id="bank-status" class="muted small" role="status"></div></section>
+    </section>
+    <footer id="history-footnote">仅反映本测试表现。</footer>
+  </main>
+  <dialog id="add-dialog" class="scroll-dialog" aria-labelledby="add-title"><div class="dialog-heading"><h2 id="add-title">添加监测模型</h2><button data-close="add-dialog" class="icon-button" aria-label="关闭">×</button></div><div class="dialog-body" tabindex="0" role="region" aria-label="可添加模型"><input id="model-search" type="search" placeholder="搜索模型或供应商" aria-label="搜索模型或供应商"><div class="section-heading"><span class="muted small">新增模型默认暂停自动测试</span><button id="refresh-models" class="plain">刷新目录</button></div><div id="model-choices"></div></div></dialog>
+  <dialog id="detail-dialog" class="drawer scroll-dialog" aria-labelledby="detail-title"><div class="dialog-heading"><h2 id="detail-title">测试详情</h2><button data-close="detail-dialog" class="icon-button" aria-label="关闭详情" autofocus>×</button></div><div id="detail-content" class="dialog-body" tabindex="0" role="region" aria-label="测试详情内容"></div></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button id="confirm-cancel">取消</button><button id="confirm-yes" class="danger">确认</button></div></dialog>
+  <div id="overview-tooltip" class="heat-tooltip" role="tooltip" hidden></div>
+  <dialog id="overview-group-dialog" class="scroll-dialog" aria-labelledby="overview-group-title"><div class="dialog-heading"><h2 id="overview-group-title">相近时间的观测</h2><button data-close="overview-group-dialog" class="icon-button" aria-label="关闭观测列表">×</button></div><div id="overview-group-content" class="dialog-body"></div></dialog>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

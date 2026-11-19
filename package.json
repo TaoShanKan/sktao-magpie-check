@@ -1,0 +1,46 @@
+{
+  "name": "sktao-magpie-check",
+  "version": "0.4.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Local milk reasoning and model fingerprint monitoring with independent schedules.",
+  "type": "module",
+  "main": "src/plugin.js",
+  "engines": {
+    "bun": ">=1.2.20"
+  },
+  "scripts": {
+    "start": "bun src/cli.js",
+    "dev": "bun --watch src/cli.js",
+    "test": "bun test tests",
+    "test:browser": "bun scripts/browser-check.js",
+    "test:magpie": "bun scripts/magpie-check.js"
+  },
+  "files": [
+    "src",
+    "page",
+    "ui",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "vendor"
+  ],
+  "magpie": {
+    "name": "模型质量",
+    "page": {
+      "title": "模型质量",
+      "file": "page/index.html",
+      "icon": "page/icon.svg",
+      "service": {
+        "port": 4397,
+        "option": "port"
+      }
+    },
+    "permissions": [],
+    "options": {
+      "port": 4397
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0"
+  }
+}
