@@ -85,6 +85,9 @@ export class Store {
     this.db.transaction(() => this.db.query('INSERT INTO configurations(model,test_id,value) VALUES(?,?,?) ON CONFLICT(model,test_id) DO UPDATE SET value=excluded.value').run(config.model, testId(config.testId), json({ ...config, testId: testId(config.testId) })))();
     return config;
   }
+  saveModelConfigs(configs) {
+    return this.db.transaction(() => configs.map(config => this.saveConfig(config)))();
+  }
   deleteConfig(model) { this.db.transaction(() => this.db.query('DELETE FROM configurations WHERE model=?').run(model))(); }
   historyModels() {
     const models = new Map(this.configs().map(c => [c.model, { model: c.model, name: c.name, removed: false }]));

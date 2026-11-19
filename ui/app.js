@@ -5,11 +5,10 @@
   const callLabels = { completed: '正常完成', error: '调用异常', interrupted: '服务中断', cancelled: '已取消', queued: '排队中', running: '执行中' };
   const testNames = { milk: '奶牛推理', fingerprint: '模型指纹' };
   const probability = value => value == null ? '—' : `${(value * 100).toFixed(1)}%`;
-  const keyOf = (model, type) => JSON.stringify([model, type]);
   const dayOf = timestamp => new Intl.DateTimeFormat('en-CA', { timeZone: state.timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(timestamp);
   const resultIcons = { passed: '✓', failed: '×', unknown: '?', error: '!', queued: '◷', running: '◷' };
   const badge = result => `<span class="badge ${escape(result)}">${resultIcons[result] ? `<span aria-hidden="true">${resultIcons[result]}</span> ` : ''}${escape(labels[result] || result)}</span>`;
-  let state = { configs: [], models: [], active: [], timeZone: 'Asia/Shanghai' }, catalog = [], catalogError = '';
+  let state = { modelConfigs: [], configs: [], models: [], active: [], timeZone: 'Asia/Shanghai' }, catalog = [], catalogError = '';
   let testId = 'milk', tab = 'history', selectedModel = '', page = 1, filter = null, detail = null, pollBusy = false, historyVersion = 0;
   let toastTimer, settingsRendered = false, needsAuthReload = false;
   const saves = new Map(), saveTimers = new Map(), heatScroll = new Map();
@@ -49,7 +48,7 @@
     pollBusy = true;
     try {
       const incoming = await api('api/state');
-      if (incoming.apiVersion !== 2 || incoming.uiVersion !== 2 || !incoming.bank || incoming.configs.some(c => !testNames[c.testId])) {
+      if (incoming.apiVersion !== 2 || incoming.uiVersion !== 3 || !Array.isArray(incoming.modelConfigs) || !incoming.bank || incoming.configs.some(c => !testNames[c.testId])) {
         settingsRendered = false; $('#settings-list').replaceChildren(); $('#history-content').hidden = true; $('#history-summary').hidden = true;
         $('#history-run').disabled = true; $('#history-more').disabled = true; $('#add-model').disabled = true; $('#update-bank').disabled = true;
         $('#bank-status').textContent = '当前仍连接旧版服务，参考库功能尚未启动。';
@@ -284,45 +283,53 @@
     $('#bank-status').innerHTML = `<p class="bank-state">${b.state === 'loading' ? '正在更新…' : b.state === 'missing' ? '尚未下载，首次指纹检测时自动下载' : '本地参考库可用'}</p><dl class="bank-meta">${b.bank ? `<dt>构建版本</dt><dd>${escape(b.bank.builtAt)}</dd>` : ''}${b.updatedAt ? `<dt>最近更新</dt><dd>${time(b.updatedAt)}</dd>` : ''}${b.lastAttempt ? `<dt>最近检查</dt><dd>${time(b.lastAttempt)}</dd>` : ''}</dl>${b.error ? `<p class="save-error">更新失败：${escape(b.error)}${b.bank ? ' · 继续使用本地快照' : ''}</p>` : ''}`;
     $('#update-bank').disabled = b.state === 'loading';
   }
+  function sharedFields(c) {
+    return `<div class="config-fields"><label class="field"><span>检测间隔</span><span class="input-unit"><input name="intervalMinutes" type="number" min="1" max="43200" step="1" required value="${c.intervalMinutes}" aria-label="检测间隔"><span>分钟</span></span></label>
+      <label class="switch-label"><input class="switch" type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}><span>定期检测</span></label><button data-run>立即检测所选项</button></div>
+      <div class="config-meta"><span data-next></span><span data-save-status role="status"></span></div>
+      <details><summary>高级设置</summary><div class="config-fields"><label class="field"><span>推理强度</span><select name="effort" aria-label="推理强度"><option value="">默认</option>${[...new Set([...c.efforts, ...(c.effort ? [c.effort] : [])])].map(e => `<option value="${escape(e)}" ${e === c.effort ? 'selected' : ''}>${escape(e)}</option>`).join('')}</select></label><label class="field"><span>每项检测超时</span><span class="input-unit"><input type="number" name="timeoutSeconds" min="10" max="3600" step="1" required value="${c.timeoutSeconds}" aria-label="每项检测超时"><span>秒</span></span></label></div><p class="muted small">超时分别计时：奶牛为单次推理，指纹为整轮采样。</p></details>`;
+  }
   function renderSettings() {
     settingsRendered = true;
     $('#catalog-status').textContent = catalogError;
-    const models = [...new Map(state.configs.map(c => [c.model, c])).values()];
-    $('#settings-list').innerHTML = models.length ? models.map(m => `<article class="model-group" data-model="${escape(m.model)}"><div class="section-heading"><div><h3>${escape(m.name)}</h3><div class="model-id">${escape(m.model)}</div></div><button class="plain danger" data-remove>移除</button></div>${state.configs.filter(c => c.model === m.model).map(c => `<section class="config-card" data-config-model="${escape(c.model)}" data-test-id="${c.testId}" aria-label="${testNames[c.testId]}设置"><div class="plan-heading"><h4>${testNames[c.testId]}</h4><span class="muted small">${c.testId === 'fingerprint' ? '每轮最多 3 条采样请求' : '每轮 1 条推理请求'}</span></div>
-      <div class="config-fields"><label class="field"><span>检测间隔</span><span class="input-unit"><input name="intervalMinutes" type="number" min="1" max="43200" step="1" ${c.testId === 'milk' ? 'required' : ''} value="${c.intervalMinutes ?? ''}" placeholder="自行设置" aria-label="检测间隔" ${c.testId === 'fingerprint' ? `aria-describedby="interval-hint-${encodeURIComponent(m.model)}-${c.testId}"` : ''}><span>分钟</span></span>${c.testId === 'fingerprint' ? `<small class="interval-hint" id="interval-hint-${encodeURIComponent(m.model)}-${c.testId}" ${c.intervalMinutes ? 'hidden' : ''}>填写间隔后可开启定期检测</small>` : ''}</label>
-      <label class="switch-label"><input class="switch" type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}><span>定期检测</span></label><button data-run>立即测试</button></div>
-      <div class="config-meta"><span data-next></span><span data-save-status role="status"></span></div>
-      <details><summary>高级设置</summary><div class="config-fields"><label class="field"><span>推理强度</span><select name="effort" aria-label="推理强度"><option value="">默认</option>${[...new Set([...c.efforts, ...(c.effort ? [c.effort] : [])])].map(e => `<option value="${escape(e)}" ${e === c.effort ? 'selected' : ''}>${escape(e)}</option>`).join('')}</select></label><label class="field"><span>${c.testId === 'fingerprint' ? '整轮超时' : '单次超时'}</span><span class="input-unit"><input type="number" name="timeoutSeconds" min="10" max="3600" step="1" required value="${c.timeoutSeconds}" aria-label="超时"><span>秒</span></span></label></div></details></section>`).join('')}</article>`).join('') : '<div class="empty"><h2>添加第一个模型</h2><p>从 Magpie 模型目录中选择，各模型可独立配置。</p></div>';
+    $('#settings-list').innerHTML = state.modelConfigs.length ? state.modelConfigs.map(c => `<article class="model-group" data-model="${escape(c.model)}"><div class="section-heading"><div><h3>${escape(c.name)}</h3><div class="model-id">${escape(c.model)}</div></div><button class="plain danger" data-remove>移除</button></div>
+      <section class="config-card" data-config-model="${escape(c.model)}" aria-label="${escape(c.name)}检测设置"><fieldset class="test-selection"><legend>检测项目</legend>${Object.entries(testNames).map(([type, name]) => `<label class="test-choice"><input type="checkbox" name="selectedTests" value="${type}" ${c.selectedTests.includes(type) ? 'checked' : ''}><span><strong>${name}</strong><small>${type === 'milk' ? '每轮 1 条推理请求' : '每轮最多 3 条采样请求'}</small></span></label>`).join('')}</fieldset><p class="muted small selection-hint">所选项目共用以下配置；勾选后不会立即检测。</p>${sharedFields(c)}</section></article>`).join('') : '<div class="empty"><h2>添加第一个模型</h2><p>从 Magpie 模型目录中选择，各模型可独立配置。</p></div>';
     updateConfigStatus(); renderBank();
   }
   function updateConfigStatus() {
     for (const card of document.querySelectorAll('.config-card')) {
-      const config = state.configs.find(c => c.model === card.dataset.configModel && c.testId === card.dataset.testId);
-      if (!config) continue;
-      card.querySelector('[data-next]').textContent = config.enabled ? `下次测试 ${time(config.nextAt)}` : '自动测试已暂停';
-      const busy = state.active.some(j => j.model === config.model && j.testId === config.testId);
-      card.querySelector('[data-run]').disabled = busy;
-      card.querySelector('[data-run]').textContent = busy ? '测试进行中…' : '立即测试';
+      const config = state.modelConfigs.find(c => c.model === card.dataset.configModel);
+      if (!config?.shared) continue;
+      const selected = [...card.querySelectorAll('[name=selectedTests]:checked')].map(i => i.value);
+      const enabled = card.querySelector('[name=enabled]');
+      if (!enabled) continue;
+      enabled.disabled = !selected.length;
+      if (!selected.length) enabled.checked = false;
+      const active = state.active.filter(j => j.model === config.model);
+      card.querySelector('[data-next]').textContent = [!selected.length ? '请选择至少一个检测项目' : config.enabled ? `下次检测 ${time(config.nextAt)}` : '定期检测已暂停', ...active.map(j => `${testNames[j.testId]}${j.state === 'queued' ? '排队中' : '执行中'}`)].join(' · ');
+      const run = card.querySelector('[data-run]');
+      run.disabled = !selected.length || active.length > 0;
+      run.textContent = active.length ? '检测进行中…' : '立即检测所选项';
     }
   }
   async function saveCard(card) {
-    const localStatus = card.querySelector('[data-save-status]');
-    for (const input of card.querySelectorAll('input')) if (!input.reportValidity()) throw new Error('请检查模型配置中的数值范围');
-    const model = card.dataset.configModel, type = card.dataset.testId, key = keyOf(model, type);
-    const interval = card.querySelector('[name=intervalMinutes]');
-    const enabled = card.querySelector('[name=enabled]');
-    if (enabled.checked && !interval.value) { enabled.checked = false; interval.focus(); localStatus.textContent = '请先设置指纹检测间隔，再开启定期检测'; localStatus.className = 'save-error'; throw new Error(localStatus.textContent); }
-    const data = { model, testId: type, enabled: card.querySelector('[name=enabled]').checked,
-      intervalMinutes: interval.value === '' ? null : Number(interval.value), timeoutSeconds: Number(card.querySelector('[name=timeoutSeconds]').value), effort: card.querySelector('[name=effort]').value };
+    const model = card.dataset.configModel, key = model;
     const status = card.querySelector('[data-save-status]');
+    for (const input of card.querySelectorAll('input')) if (!input.reportValidity()) {
+      status.textContent = '未保存：请检查间隔或超时范围'; status.className = 'save-error'; throw new Error(status.textContent);
+    }
+    const selectedTests = [...card.querySelectorAll('[name=selectedTests]:checked')].map(i => i.value);
+    if (!selectedTests.length) card.querySelector('[name=enabled]').checked = false;
+    updateConfigStatus();
+    const data = { model, selectedTests, enabled: card.querySelector('[name=enabled]').checked,
+      intervalMinutes: Number(card.querySelector('[name=intervalMinutes]').value), timeoutSeconds: Number(card.querySelector('[name=timeoutSeconds]').value), effort: card.querySelector('[name=effort]').value };
     clearTimeout(saveTimers.get(key)); status.textContent = '正在保存…'; status.className = '';
     const pending = (saves.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
       try {
-        const saved = await api('api/configs', 'POST', data);
-        state.configs = state.configs.map(c => c.model === model && c.testId === type ? saved : c);
+        const saved = await api('api/model-configs', 'POST', data);
+        state.modelConfigs = state.modelConfigs.map(c => c.model === model ? saved : c);
         status.textContent = '已自动保存'; status.className = ''; updateConfigStatus();
         clearTimeout(saveTimers.get(key)); saveTimers.set(key, setTimeout(() => { if (status.textContent === '已自动保存') status.textContent = ''; }, 3500));
-        const hint = card.querySelector('.interval-hint'); if (hint) hint.hidden = interval.value !== '';
       } catch (e) {
         status.textContent = `未保存：${e.message}`; status.className = 'save-error';
         const retry = document.createElement('button'); retry.textContent = '重试保存'; retry.className = 'plain';
@@ -383,7 +390,7 @@
     });
   }
   async function run(model, type = testId) {
-    const key = keyOf(model, type);
+    const key = model;
     if (saves.has(key)) await saves.get(key);
     const controls = [...document.querySelectorAll('[data-run],#history-run')].filter(b => b.id === 'history-run' ? selectedModel === model && testId === type : b.closest('.config-card')?.dataset.configModel === model && b.closest('.config-card')?.dataset.testId === type);
     controls.forEach(b => { b.disabled = true; b.textContent = '正在提交…'; });
@@ -414,15 +421,20 @@
     if (button?.dataset.day) { $('#filter-day').value = button.dataset.day; $('#filter-slot').value = button.dataset.slot; filter = { day: button.dataset.day, slot: Number(button.dataset.slot) }; page = 1; return loadHistory(); }
     const record = event.target.closest('[data-record]'); if (record) return openDetail(record.dataset.record);
     if (button?.dataset.add) {
-      await api('api/configs', 'POST', { model: button.dataset.add }); $('#add-dialog').close(); await refresh(); renderSettings(); toast('已添加模型，自动测试已暂停'); return;
+      await api('api/model-configs', 'POST', { model: button.dataset.add }); $('#add-dialog').close(); await refresh(); renderSettings(); toast('已添加模型，自动测试已暂停'); return;
     }
     const card = button?.closest('.config-card');
-    if (card && button.hasAttribute('data-run')) { await saveCard(card); return run(card.dataset.configModel, card.dataset.testId); }
+    if (card && button.hasAttribute('data-run')) {
+      await saveCard(card); button.disabled = true; button.textContent = '正在提交…';
+      try { await api('api/run-selected', 'POST', { model: card.dataset.configModel }); toast('所选检测已提交'); }
+      finally { await refresh(); }
+      return;
+    }
     const group = button?.closest('.model-group');
     if (group && button.hasAttribute('data-remove')) {
       const model = group.dataset.model;
       if (await confirm('移除模型配置', `${model}\n停止自动测试并取消未完成任务，已有历史将保留。`, '移除')) {
-        await Promise.allSettled(['milk', 'fingerprint'].map(type => saves.get(keyOf(model, type))).filter(Boolean));
+        await Promise.allSettled([saves.get(model)].filter(Boolean));
         await api(`api/configs/${encodeURIComponent(model)}`, 'DELETE'); await refresh(); renderSettings();
       }
     }

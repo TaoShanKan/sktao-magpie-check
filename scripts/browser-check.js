@@ -53,7 +53,7 @@ try {
   await page.getByRole('button', { name: '＋ 添加模型' }).click();
   await page.getByRole('searchbox').fill('logic-a');
   await page.locator('[data-add="mock/logic-a"]').click();
-  const a = page.locator('[data-model="mock/logic-a"] [data-test-id=milk]');
+  const a = page.locator('[data-model="mock/logic-a"] .config-card');
   await expect(a).toBeVisible(); await expect(a.locator('[name=enabled]')).not.toBeChecked();
   await a.locator('[name=intervalMinutes]').fill('45'); await a.locator('[name=intervalMinutes]').blur();
   await expect.poll(() => f.service.store.config('mock/logic-a')?.intervalMinutes).toBe(45);
@@ -64,13 +64,20 @@ try {
   await page.getByRole('searchbox').fill('logic-b'); await page.locator('[data-add="mock/logic-b"]').click();
   expect(f.service.store.config('mock/logic-a').effort).toBe('high');
   expect(f.service.store.config('mock/logic-b').intervalMinutes).toBe(30);
-  const b = page.locator('[data-model="mock/logic-b"] [data-test-id=milk]');
+  const b = page.locator('[data-model="mock/logic-b"] .config-card');
   await b.locator('[name=enabled]').check();
   await expect.poll(() => f.service.store.config('mock/logic-b').enabled).toBe(true);
   await b.locator('[name=enabled]').uncheck();
   await expect.poll(() => f.service.store.config('mock/logic-b').enabled).toBe(false);
+  // Both selected types run from the same saved parameters, with an offline fingerprint executor.
+  let fpSnapshot;
+  f.service.engine.fingerprint = { run: async snapshot => { fpSnapshot = snapshot; return {}; } };
+  await a.locator('[name=selectedTests][value=fingerprint]').check();
+  await expect.poll(() => f.service.store.config('mock/logic-a', 'fingerprint').selected).toBe(true);
   await a.locator('[data-run]').click();
   await expect.poll(() => f.service.store.list('mock/logic-a').items[0]?.result).toBe('passed');
+  await expect.poll(() => f.service.store.list('mock/logic-a', 1, null, null, 'fingerprint').total).toBe(1);
+  expect(fpSnapshot).toMatchObject({ effort: 'high', timeoutSeconds: 120, intervalMinutes: 45 });
   await page.getByRole('tab', { name: '历史记录' }).click();
   await chooseModel('mock/logic-a');
   await page.locator('#history-model').focus(); await page.keyboard.press('ArrowDown');
@@ -183,14 +190,34 @@ try {
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.getByRole('tab', { name: '设置', exact: true }).click();
-  const fpCard = page.locator('[data-model="mock/logic-b"] [data-test-id=fingerprint]');
-  await expect(fpCard.locator('[name=intervalMinutes]')).toHaveValue('');
-  await fpCard.locator('[name=enabled]').click();
-  await expect(fpCard.locator('[name=enabled]')).not.toBeChecked();
-  await expect(page.locator('#notice')).toContainText('请先设置');
+  const fpCard = page.locator('[data-model="mock/logic-b"] .config-card');
+  await expect(page.locator('[data-model="mock/logic-b"] .config-card')).toHaveCount(1);
+  await expect(fpCard.locator('[name=intervalMinutes]')).toHaveValue('30');
+  await fpCard.locator('[name=selectedTests][value=fingerprint]').check();
+  await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').selected).toBe(true);
+  const requestsBeforeSelection = f.requests.length;
   await fpCard.locator('[name=intervalMinutes]').fill('360'); await fpCard.locator('[name=intervalMinutes]').blur();
   await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').intervalMinutes).toBe(360);
-  expect(f.service.store.config('mock/logic-b').intervalMinutes).toBe(30);
+  expect(f.service.store.config('mock/logic-b').intervalMinutes).toBe(360);
+  expect(f.requests.length).toBe(requestsBeforeSelection);
+  await fpCard.locator('[name=enabled]').check();
+  await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').enabled).toBe(true);
+  expect(f.service.store.config('mock/logic-b').nextAt).toBe(f.service.store.config('mock/logic-b', 'fingerprint').nextAt);
+  await fpCard.locator('[name=enabled]').uncheck();
+  await expect.poll(() => f.service.store.config('mock/logic-b').enabled).toBe(false);
+  await fpCard.locator('[name=selectedTests][value=milk]').uncheck();
+  await fpCard.locator('[name=selectedTests][value=fingerprint]').uncheck();
+  await expect(fpCard.locator('[data-run]')).toBeDisabled();
+  await expect(fpCard.locator('[name=enabled]')).toBeDisabled();
+  await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').selected).toBe(false);
+  await fpCard.locator('[name=selectedTests][value=milk]').check();
+  // Autosave errors persist locally and retry the current complete form.
+  await page.route('**/api/model-configs', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '模拟保存失败' }) }));
+  await fpCard.locator('[name=intervalMinutes]').fill('180'); await fpCard.locator('[name=intervalMinutes]').blur();
+  await expect(fpCard.locator('[data-save-status]')).toContainText('模拟保存失败');
+  await page.unroute('**/api/model-configs');
+  await fpCard.getByRole('button', { name: '重试保存' }).click();
+  await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').intervalMinutes).toBe(180);
   await page.reload(); await expect(page.locator('#notice')).toBeHidden();
   const seedFingerprint = (i, candidate, bank = 'fixture-1', partial = false) => {
     const row = f.service.store.create({ ...f.service.store.config('mock/logic-b', 'fingerprint'), testId: 'fingerprint', ruleVersion: 'lmfpd-sdk-0.2.0' }, 'scheduled', now - 600000 + i * 1000);
@@ -357,7 +384,7 @@ try {
   await page.reload(); await page.setViewportSize({ width: 375, height: 560 });
   await page.evaluate(async () => { scrollTo(0, 0); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
   await page.locator('#history-model').click();
-  await expect(page.locator('.model-option')).toHaveCount(36);
+  await expect(page.locator('.model-option')).toHaveCount(pickerState.models.length);
   const pickerBox = await page.locator('#model-menu').boundingBox();
   expect(pickerBox.x).toBeGreaterThanOrEqual(0); expect(pickerBox.x + pickerBox.width).toBeLessThanOrEqual(375);
   expect(pickerBox.y + pickerBox.height).toBeLessThanOrEqual(560);
@@ -377,7 +404,26 @@ try {
   await expect(page.locator('body')).not.toContainText('undefined');
   await page.unroute('**/api/state'); await page.locator('#notice button').click();
   await expect(page.locator('#notice')).toBeHidden();
-  await expect(page.locator('[data-test-id=fingerprint] h4')).toHaveText('模型指纹');
+  await expect(page.locator('[name=selectedTests][value=fingerprint]')).toBeVisible();
+  await expect(page.locator('[name=selectedTests][value=milk]')).toBeChecked();
+  await expect(page.locator('[name=enabled]')).not.toBeChecked();
+  for (const [width, height] of [[375, 812], [812, 375], [1440, 900]]) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.locator('body').evaluate(el => { el.style.fontSize = '20px'; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.locator('body').evaluate(el => { el.style.fontSize = ''; });
+  await page.locator('[name=selectedTests][value=fingerprint]').focus();
+  await page.keyboard.press('Space');
+  await expect(page.locator('[name=selectedTests][value=fingerprint]')).toBeChecked();
+  await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').selected).toBe(true);
+  await page.screenshot({ path: 'docs/screenshots/settings-shared-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.screenshot({ path: 'docs/screenshots/settings.png', fullPage: true });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: 'docs/screenshots/settings-shared-dark.png', fullPage: true });
   expect(errors).toEqual([]);
-  console.log('PASS: milk and fingerprint UI, independent plans, partial probabilities, cross-page changes, scoped clearing, inert evidence, evidence-first corrections, latest-date heatmap/scroll retention/keyboard tooltip, date filters, server-side changes, candidate groups, fixed modal headers, isolated modal scrolling, light/dark and 375/768/1024/1440 layouts');
+  console.log('PASS: milk and fingerprint UI, shared model settings/selection/autosave retry, partial probabilities, cross-page changes, scoped clearing, inert evidence, evidence-first corrections, latest-date heatmap/scroll retention/keyboard tooltip, date filters, server-side changes, candidate groups, fixed modal headers, isolated modal scrolling, light/dark and 375/768/1024/1440 layouts');
 } finally { await browser?.close(); await f.close(); }

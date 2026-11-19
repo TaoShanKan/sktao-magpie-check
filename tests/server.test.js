@@ -78,7 +78,7 @@ test('two services cannot schedule against the same database and managed hosts s
 
 test('UI history capabilities expose bounded summaries and apply change filters server-side', async () => {
   const f = await setup();
-  expect((await f.api('api/state')).uiVersion).toBe(2);
+  expect((await f.api('api/state')).uiVersion).toBe(3);
   let previous;
   for (let i = 0; i < 25; i++) {
     const prediction = i === 0 ? 'A' : 'B';

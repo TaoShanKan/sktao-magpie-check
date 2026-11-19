@@ -94,9 +94,7 @@ tbody tr[data-record] { cursor:pointer; } tbody tr[data-record]:hover { backgrou
 .empty p { margin:8px 0 17px; }
 .model-id { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
 .model-group>.section-heading { margin-bottom:10px; }
-.config-card { position:relative; display:grid; grid-template-columns:160px 1fr; gap:4px 20px; border-top:1px solid var(--line); padding:14px 0 0; margin:12px 0 0; }
-.plan-heading { grid-row:1 / 4; display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
-.plan-heading .small { display:block; max-width:150px; }
+.config-card { position:relative; display:block; border-top:1px solid var(--line); padding:14px 0 0; margin:12px 0 0; }
 .config-fields { display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
 .config-fields [data-run] { margin-left:auto; }
 .field { display:grid; gap:5px; min-width:0; }
@@ -111,7 +109,7 @@ input.switch:checked { background:var(--accent); } input.switch:checked::after {
 .config-meta .save-error { color:var(--bad); }
 details { margin-top:10px; } summary { cursor:pointer; color:var(--muted); font-size:13px; padding:3px 0; }
 details .config-fields { margin-top:10px; padding:12px; background:var(--soft); border-radius:7px; }
-.config-card>details { grid-column:2; margin-top:0; }
+.config-card>details { margin-top:10px; }
 .bank-settings .section-heading { flex-wrap:wrap; }
 .bank-state { font-weight:500; color:var(--fg); margin:6px 0; }
 .bank-meta { display:grid; grid-template-columns:auto 1fr; gap:4px 16px; margin:8px 0; }
@@ -199,7 +197,6 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; background:v
   .context-controls { flex-wrap:wrap; align-items:center; }
   .model-picker { max-width:none; flex-basis:100%; }
   .actions { padding:0; }
-  .config-card { grid-template-columns:125px 1fr; gap:4px 12px; }
   .config-fields { gap:12px; }
 }
 @media(max-width:700px) {
@@ -229,9 +226,6 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; background:v
   tr[data-record] td:last-child { grid-column:3; grid-row:2; text-align:right; }
   tr[data-record] .manual-label { display:block; margin-left:0; }
   tr[data-record] button { padding:5px 0 5px 10px; }
-  .config-card { display:block; }
-  .plan-heading { flex-direction:row; justify-content:space-between; margin-bottom:10px; }
-  .plan-heading .small { max-width:none; }
   .config-fields { gap:12px; align-items:flex-start; }
   .switch-label { padding-top:22px; }
   .config-fields [data-run] { margin-top:22px; }
@@ -312,3 +306,14 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; background:v
 [data-theme=dark] .color-4 { --candidate-color:#96c4ef; } [data-theme=dark] .color-5 { --candidate-color:#d7c27e; } [data-theme=dark] .color-6 { --candidate-color:#c7acf0; } [data-theme=dark] .color-7 { --candidate-color:#b2d38a; }
 @media(max-width:700px) { .overview-axis,.overview-row { grid-template-columns:125px minmax(0,1fr); } .overview-chart { scroll-padding-inline:135px 24px; } .overview-grid { min-width:640px; } .overview-ranges { width:100%; } .overview-ranges button { flex:1; } }
 @media(pointer:coarse) { .overview-point,.overview-event { width:44px; height:44px; min-height:44px; } .overview-ranges button { min-height:44px; } }
+
+/* One configuration per model; test selection remains separate from automatic scheduling. */
+.test-selection { display:flex; flex-wrap:wrap; gap:12px; border:0; padding:0; margin:0; min-width:0; }
+.test-selection legend { font-weight:600; margin-bottom:8px; }
+.test-choice { display:flex; align-items:center; gap:10px; padding:10px 14px; min-height:48px; border:1px solid var(--line); border-radius:8px; cursor:pointer; background:var(--soft); }
+.test-choice:has(input:checked) { border-color:var(--accent); }
+.test-choice input { width:18px; height:18px; min-height:18px; padding:0; flex-shrink:0; margin:0; accent-color:var(--accent); }
+.test-choice strong,.test-choice small { display:block; }
+.test-choice small { color:var(--muted); font-size:12px; margin-top:3px; }
+.selection-hint { margin:10px 0 16px; }
+@media(max-width:600px) { .test-choice { flex:1 1 180px; } }

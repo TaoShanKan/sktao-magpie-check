@@ -88,3 +88,13 @@ GET api/fingerprint-summary?model=… 返回 {total,scored,partial,changes,bankC
 ## 指纹汇总图（版本 0.4.0）
 
 state.uiVersion=2。新增 GET api/fingerprint-overview?model=…&days=1|7|30，默认 7；其他范围返回 400。返回 {from,to,days,total,omitted,items}，范围为服务当前时间前 days×24 小时，按 startedAt 包含端点。items 为升序摘要，最多最新 10000 轮；omitted 明示省略数量。与历史分页、changes 筛选独立。记录含 id/startedAt/state/prediction/predictionId/probability/decision/usedOutputs/bankId/bankBuiltAt/sdk/bankChanged/sdkChanged/candidateChanged/callError，无长回答、原始请求、样本或凭证。SDK 变化与前一有参考快照的记录比较，参考库变化仍独立计算。无数据库结构或历史判定变化。
+
+## 共享模型配置（版本 0.5.0）
+
+state.uiVersion=3，新增 modelConfigs：每模型一项。shared=true 时包含 selectedTests、enabled（总开关）、intervalMinutes、timeoutSeconds、effort、efforts、nextAt；旧配置在引擎启动时直接转换。旧 configs 类型视图继续返回。
+
+POST api/model-configs 接收 model 与可选 selectedTests、enabled、intervalMinutes、timeoutSeconds、effort。完整校验后在事务中同步两行。已共享模型拒绝 POST api/configs 的旧分项写入，返回 409。
+
+POST api/run-selected 接收 {model}，以事务生成所选项的记录，返回 202 {items:[{id,model,testId,state}]}。任意该模型任务未完成则 409；无选择则 400，均无部分入队。历史页 POST api/run 保留单类型测试。
+
+SQLite 仍为 v2，沿用 configurations 的两行及 JSON：shared 标记、selected 测试项选择、automaticEnabled 总开关。enabled=selected&&automaticEnabled，所选启用项 nextAt 相同。不改 records、判定版本或历史快照。state.active 新增 state=queued|running。旧参数转换优先唯一启用项，否则采用奶牛；全部暂停预选奶牛且保持暂停。

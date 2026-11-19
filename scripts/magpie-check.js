@@ -64,7 +64,7 @@ try {
   }
   await expect(app.locator('#history-empty')).toBeVisible();
   await app.locator('#tab-settings').click(); await app.locator('#add-model').click();
-  await app.locator('[data-add="mock/logic-a"]').click(); await app.locator('[data-test-id=milk] [data-run]').click();
+  await app.locator('[data-add="mock/logic-a"]').click(); await app.locator('.config-card [data-run]').click();
   await app.locator('#tab-history').click(); await expect(app.locator('#records .badge')).toHaveText('✓ 通过', { timeout: 10000 });
   await app.locator('#records button').click(); await expect(app.locator('#raw-answer')).toContainText('46.24');
   await app.locator('#correction-panel > summary').click();
@@ -76,7 +76,7 @@ try {
   const seed = new Store(join(sandbox, 'quality-data/quality.sqlite'));
   try {
     const config = seed.config('mock/logic-a', 'fingerprint');
-    expect(config.intervalMinutes).toBeNull(); expect(config.enabled).toBe(false);
+    expect(config.intervalMinutes).toBe(30); expect(config.enabled).toBe(false);
     const row = seed.create(config, 'manual');
     seed.evidence(row.id, { sdk: 'lmfpd-sdk-0.2.0', bank: { id: 'integration-fixture', builtAt: 'integration-fixture' }, challenges: [], samples: [], analysis: { decision: 'scored', prediction: 'fixture/model', prediction_name: '示例候选模型', probability: .875, used_outputs: 3, results: [{ model: 'fixture/model', display_name: '示例候选模型', probability: .875 }] } });
     seed.finish(row.id, {});
