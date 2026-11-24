@@ -80,7 +80,7 @@
     const busy = state.active.some(j => j.model === selectedModel && j.testId === testId);
     $('#history-run').disabled = !config || busy;
     $('#history-run').textContent = busy ? '测试进行中…' : `测试${testNames[testId]}`;
-    $('#plan-summary').textContent = !current ? '' : !config ? '已移除模型 · 仅保留历史' : `${testNames[testId]} · ${config.enabled ? `每 ${config.intervalMinutes} 分钟 · 下次 ${time(config.nextAt)}` : '定期检测已暂停'}${busy ? ' · 测试进行中' : ''}`;
+    $('#plan-summary').textContent = !current ? '' : !config ? '仅保留历史' : config.enabled ? `每 ${config.intervalMinutes} 分钟 · 下次 ${time(config.nextAt)}` : '定期检测已暂停';
     $('#clear-history').disabled = !selectedModel;
     $('#history-empty').hidden = !!selectedModel;
     $('#history-content').hidden = !selectedModel;
@@ -99,14 +99,14 @@
     $('#history-summary').hidden = false;
     const stat = (label, value, cls = '') => `<div class="summary-stat ${cls}"><span>${label}</span><strong>${value}</strong></div>`;
     if (type === 'fingerprint') {
-      $('#history-summary').innerHTML = `<div class="summary-range">最近 30 天<span>${time(overview.from)} — ${time(overview.to)}<br>不随分页及变化筛选变化</span></div>${stat('测试轮数', overview.total)}${stat('完整评分', overview.scored)}${stat('部分排名', overview.partial)}${stat('候选变化', overview.changes)}${stat('参考库更新', overview.bankChanges)}`;
+      $('#history-summary').innerHTML = `<div class="summary-range">最近 30 天<span>${time(overview.from)} — ${time(overview.to)}</span></div>${stat('测试轮数', overview.total)}${stat('完整评分', overview.scored)}${stat('部分排名', overview.partial)}${stat('候选变化', overview.changes)}${stat('参考库更新', overview.bankChanges)}`;
       renderFingerprintOverview(distribution);
       timelineItems = history.items; renderTimeline(timelineItems);
     } else {
       const heatmap = overview;
       const counts = heatmap.cells.reduce((a, c) => { for (const k of Object.keys(a)) a[k] += c[k]; return a; }, { count: 0, passed: 0, failed: 0, unknown: 0, error: 0, pending: 0 });
-      $('#history-summary').innerHTML = `<div class="summary-range">最近 30 个日期<span>${heatmap.dates[0]} — ${heatmap.dates.at(-1)}<br>按服务时区 · 不随列表筛选变化</span></div>${stat('已结束', counts.count)}${stat('通过', counts.passed, 'stat-passed')}${stat('未通过', counts.failed, 'stat-failed')}${stat('无法判定', counts.unknown)}${stat('调用异常', counts.error, 'stat-error')}${stat('进行中', counts.pending)}`;
-      $('#timezone').textContent = `${heatmap.timeZone} · 每格 6 小时`;
+      $('#history-summary').innerHTML = `<div class="summary-range">最近 30 天<span>${heatmap.dates[0]} — ${heatmap.dates.at(-1)}</span></div>${stat('已结束', counts.count)}${stat('通过', counts.passed, 'stat-passed')}${stat('未通过', counts.failed, 'stat-failed')}${stat('无法判定', counts.unknown)}${stat('调用异常', counts.error, 'stat-error')}${stat('进行中', counts.pending)}`;
+      $('#timezone').textContent = heatmap.timeZone;
       const heat = $('#heatmap');
       if (heatModel) heatScroll.set(heatModel, heat.scrollLeft);
       const markup = `<div class="heatmap-grid">${[0, 1, 2, 3].map(slot => `<span class="heat-label">${String(slot * 6).padStart(2, '0')}–${String(slot * 6 + 6).padStart(2, '0')}</span>${heatmap.dates.map(day => {
@@ -120,7 +120,8 @@
       $('#filter-day').max = heatmap.dates.at(-1);
       if (!$('#filter-day').value) $('#filter-day').value = heatmap.dates.at(-1);
       $('#reset-filter').hidden = !filter;
-      $('#filter-description').textContent = filter ? `${filter.day} · ${filter.slot * 6}:00–${filter.slot * 6 + 6}:00` : '全部历史 · 点击记录查看详情及人工矫正';
+      $('#filter-description').hidden = !filter;
+      $('#filter-description').textContent = filter ? `${filter.day} · ${filter.slot * 6}:00–${filter.slot * 6 + 6}:00` : '';
       const records = history.items.length ? history.items.map(r => `<tr data-record="${escape(r.id)}"><td data-label="时间">${time(r.startedAt)}</td><td data-label="结果">${badge(r.result)}${r.corrected ? '<span class="manual-label">人工矫正</span>' : ''}</td><td data-label="耗时">${duration(r.duration)}</td><td data-label="来源" class="muted">${r.source === 'scheduled' ? '定时' : '手动'}</td><td><button class="plain" data-record="${escape(r.id)}" aria-label="查看 ${escape(time(r.startedAt))} 的测试详情">详情 →</button></td></tr>`).join('') : '<tr><td colspan="5" class="muted">该范围内暂无记录。</td></tr>';
       if ($('#records').innerHTML !== records) $('#records').innerHTML = records;
     }
@@ -146,7 +147,7 @@
       groups.get(key).items.push(r);
     }
     const rangeLabel = data.days === 1 ? '最近 24 小时' : `最近 ${data.days} 天`;
-    $('#overview-description').textContent = `${rangeLabel} · ${data.total} 轮观测 · ${state.timeZone} · 与下方分页、变化筛选独立`;
+    $('#overview-description').textContent = `${data.total} 轮观测 · ${state.timeZone}`;
     $('#overview-chart').setAttribute('aria-label', `${rangeLabel}候选分布，${data.total}轮观测；Tab 聚焦检测点查看摘要，Enter 打开详情或组内记录`);
     $('#overview-limit').hidden = !data.omitted;
     $('#overview-limit').textContent = data.omitted ? `范围内共 ${data.total} 轮，仅绘制最新 ${data.items.length} 轮，省略 ${data.omitted} 轮；请缩短范围查看。` : '';
@@ -197,7 +198,7 @@
     const scroll = host.scrollLeft, active = document.activeElement?.dataset.overviewPoint;
     const focusedTooltip = overviewTooltipAnchor === document.activeElement;
     hideOverviewTooltip();
-    host.innerHTML = data.items.length ? `<div class="overview-grid"><div class="overview-axis"><span class="overview-label">候选模型</span><div class="overview-ticks">${ticks.map(t => `<span style="left:${t.x}%">${escape(t.label)}</span>`).join('')}</div></div>${rowMarkup}<div class="overview-row event-row"><div class="overview-label">版本事件</div><div class="overview-track">${eventMarkup || '<span class="no-version-event muted small">范围内无版本变更</span>'}</div></div></div>` : '<div class="empty"><h3>该范围内暂无指纹观测</h3><p>切换更长范围查看已有历史，或等待下一次计划检测。</p></div>';
+    host.innerHTML = data.items.length ? `<div class="overview-grid"><div class="overview-axis"><span class="overview-label">候选模型</span><div class="overview-ticks">${ticks.map(t => `<span style="left:${t.x}%">${escape(t.label)}</span>`).join('')}</div></div>${rowMarkup}<div class="overview-row event-row"><div class="overview-label">版本事件</div><div class="overview-track">${eventMarkup || '<span class="no-version-event muted small">范围内无版本变更</span>'}</div></div></div>` : '<div class="empty"><h3>该范围内暂无指纹观测</h3></div>';
     host.scrollLeft = scroll;
     if (active) {
       [...host.querySelectorAll('[data-overview-point]')].find(button => button.dataset.overviewPoint === active)?.focus({ preventScroll: true });
@@ -234,7 +235,7 @@
     const group = overviewPoints.get(id); if (!group) return;
     hideOverviewTooltip();
     if (group.items.length === 1) return openDetail(group.items[0].id);
-    $('#overview-group-content').innerHTML = `<p class="muted small">${escape(group.label)}。点组仅合并显示，以下保留每轮观测。</p>${group.items.slice().reverse().map(r => `<button class="overview-record" data-overview-record="${escape(r.id)}"><span>${time(r.startedAt)} · ${escape(r.prediction || callLabels[r.state] || '无候选')}</span><small class="muted">${r.decision === 'partial' ? '部分排名 · 概率不可用' : `参考库内概率 ${probability(r.probability)}`} · 有效样本 ${r.usedOutputs ?? 0}/3${r.bankChanged ? ' · 参考库更新' : ''}${r.sdkChanged ? ' · SDK 更新' : ''}<br>参考版本 ${escape(r.bankBuiltAt || r.bankId || '—')} · SDK ${escape(r.sdk || '—')}</small></button>`).join('')}`;
+    $('#overview-group-content').innerHTML = `<p class="muted small">${escape(group.label)}</p>${group.items.slice().reverse().map(r => `<button class="overview-record" data-overview-record="${escape(r.id)}"><span>${time(r.startedAt)} · ${escape(r.prediction || callLabels[r.state] || '无候选')}</span><small class="muted">${r.decision === 'partial' ? '部分排名 · 概率不可用' : `参考库内概率 ${probability(r.probability)}`} · 有效样本 ${r.usedOutputs ?? 0}/3${r.bankChanged ? ' · 参考库更新' : ''}${r.sdkChanged ? ' · SDK 更新' : ''}<br>参考版本 ${escape(r.bankBuiltAt || r.bankId || '—')} · SDK ${escape(r.sdk || '—')}</small></button>`).join('')}`;
     $('#overview-group-dialog').showModal(); $('#overview-group-content').scrollTop = 0;
   }
   function renderTimeline(items) {
@@ -257,11 +258,11 @@
           end++;
         }
       }
-      if (end - i > 1) parts.push(`<details class="timeline-group" data-group="${escape(r.id)}"><summary><span>${escape(r.prediction)} <span class="badge">本页 ${end - i} 条</span></span><span class="muted small">${time(items[end - 1].startedAt)} — ${time(r.startedAt)} · 展开逐条查看</span></summary>${items.slice(i, end).map(entry).join('')}</details>`);
+      if (end - i > 1) parts.push(`<details class="timeline-group" data-group="${escape(r.id)}"><summary><span>${escape(r.prediction)} <span class="badge">本页 ${end - i} 条</span></span><span class="muted small">${time(items[end - 1].startedAt)} — ${time(r.startedAt)}</span></summary>${items.slice(i, end).map(entry).join('')}</details>`);
       else parts.push(entry(r));
       i = end;
     }
-    const markup = items.length ? parts.join('') : `<div class="empty"><h3>${changesOnly ? '暂无变化记录' : '还没有指纹记录'}</h3><p>${changesOnly ? '关闭「仅看变化」查看所有测试。' : '点击「测试模型指纹」开始采样，每轮最多 3 条请求。'}</p></div>`;
+    const markup = items.length ? parts.join('') : `<div class="empty"><h3>${changesOnly ? '暂无变化记录' : '还没有指纹记录'}</h3></div>`;
     if (timelineMarkup !== markup) {
       timelineMarkup = markup;
       const open = new Set([...document.querySelectorAll('.timeline-group[open]')].map(e => e.dataset.group));
@@ -293,7 +294,7 @@
     settingsRendered = true;
     $('#catalog-status').textContent = catalogError;
     $('#settings-list').innerHTML = state.modelConfigs.length ? state.modelConfigs.map(c => `<article class="model-group" data-model="${escape(c.model)}"><div class="section-heading"><div><h3>${escape(c.name)}</h3><div class="model-id">${escape(c.model)}</div></div><button class="plain danger" data-remove>移除</button></div>
-      <section class="config-card" data-config-model="${escape(c.model)}" aria-label="${escape(c.name)}检测设置"><fieldset class="test-selection"><legend>检测项目</legend>${Object.entries(testNames).map(([type, name]) => `<label class="test-choice"><input type="checkbox" name="selectedTests" value="${type}" ${c.selectedTests.includes(type) ? 'checked' : ''}><span><strong>${name}</strong><small>${type === 'milk' ? '每轮 1 条推理请求' : '每轮最多 3 条采样请求'}</small></span></label>`).join('')}</fieldset><p class="muted small selection-hint">所选项目共用以下配置；勾选后不会立即检测。</p>${sharedFields(c)}</section></article>`).join('') : '<div class="empty"><h2>添加第一个模型</h2><p>从 Magpie 模型目录中选择，各模型可独立配置。</p></div>';
+      <section class="config-card" data-config-model="${escape(c.model)}" aria-label="${escape(c.name)}检测设置"><fieldset class="test-selection"><legend class="sr-only">检测项目</legend>${Object.entries(testNames).map(([type, name]) => `<label class="test-choice"><input type="checkbox" name="selectedTests" value="${type}" ${c.selectedTests.includes(type) ? 'checked' : ''}><span><strong>${name}</strong><small>${type === 'milk' ? '每轮 1 条请求' : '每轮最多 3 条请求'}</small></span></label>`).join('')}</fieldset>${sharedFields(c)}</section></article>`).join('') : '<div class="empty"><h2>暂无监测模型</h2></div>';
     updateConfigStatus(); renderBank();
   }
   function updateConfigStatus() {
@@ -413,7 +414,6 @@
     if (button?.dataset.test) {
       testId = button.dataset.test; page = 1; filter = null; historyVersion++;
       for (const b of document.querySelectorAll('[data-test]')) b.setAttribute('aria-pressed', String(b.dataset.test === testId));
-      $('#history-footnote').textContent = testId === 'milk' ? '仅反映本测试表现。' : '每轮最多 3 条采样请求。概率仅针对参考库候选，不证明模型身份。';
       renderModelPicker(); return loadHistory();
     }
     if (button?.dataset.tab) return switchTab(button.dataset.tab);

@@ -49,12 +49,14 @@ try {
   await page.goto(f.origin);
   await expect(page.getByRole('tab', { name: '历史记录' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#history-empty')).toBeVisible();
+  await expect(page.locator('#history-empty button')).toHaveAccessibleName('添加模型');
   await page.getByRole('tab', { name: '设置', exact: true }).click();
   await page.getByRole('button', { name: '＋ 添加模型' }).click();
   await page.getByRole('searchbox').fill('logic-a');
   await page.locator('[data-add="mock/logic-a"]').click();
   const a = page.locator('[data-model="mock/logic-a"] .config-card');
   await expect(a).toBeVisible(); await expect(a.locator('[name=enabled]')).not.toBeChecked();
+  await expect(a.getByRole('group', { name: '检测项目' })).toBeVisible();
   await a.locator('[name=intervalMinutes]').fill('45'); await a.locator('[name=intervalMinutes]').blur();
   await expect.poll(() => f.service.store.config('mock/logic-a')?.intervalMinutes).toBe(45);
   await a.locator('summary').click(); await a.locator('[name=effort]').selectOption('high');
@@ -81,6 +83,7 @@ try {
   await page.getByRole('tab', { name: '历史记录' }).click();
   await chooseModel('mock/logic-a');
   await page.locator('#history-model').focus(); await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#history-model')).toHaveAccessibleName('监测模型 Logic A');
   await expect(page.locator('#history-model')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('[data-select-model="mock/logic-a"]')).toBeFocused();
   await page.keyboard.press('End'); await page.keyboard.press('Enter');
@@ -89,7 +92,7 @@ try {
   await page.locator('#history-model').click(); await page.keyboard.press('Escape');
   await expect(page.locator('#history-model')).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('#history-model')).toBeFocused();
-  await page.locator('#history-model').click(); await page.locator('footer').click();
+  await page.locator('#history-model').click(); await page.locator('#timezone').click();
   await expect(page.locator('#model-menu')).not.toBeVisible();
   mkdirSync('docs/screenshots', { recursive: true });
   await page.evaluate(() => scrollTo(0, 0)); await page.waitForTimeout(100);
@@ -295,7 +298,9 @@ try {
   await page.locator('#filter-day').fill(new Date(now).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }));
   await page.locator('#filter-slot').selectOption(String(Math.floor(Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hourCycle: 'h23' }).format(now)) / 6)));
   await page.locator('#apply-filter').click(); await expect(page.locator('#reset-filter')).toBeVisible();
+  await expect(page.locator('#filter-description')).toContainText(await page.locator('#filter-day').inputValue());
   await page.locator('#reset-filter').click();
+  await expect(page.locator('#filter-description')).toBeHidden();
   const detailButton = page.locator('#records button').first();
   const detailBox = await detailButton.boundingBox(); expect(detailBox.x + detailBox.width).toBeLessThanOrEqual(375);
   await detailButton.click();
@@ -317,12 +322,13 @@ try {
   await page.waitForTimeout(3200);
   await expect(page.locator('.timeline-group')).toHaveAttribute('open', '');
   // Overview spans the complete time window, independently of list paging and filters.
-  await expect(page.locator('#overview-description')).toContainText('最近 7 天');
+  await expect(page.locator('#overview-chart')).toHaveAttribute('aria-label', /最近 7 天/);
   await expect(page.locator('#overview-chart .overview-row')).toHaveCount(4);
   await expect(page.locator('.overview-event')).toHaveCount(1);
   await page.locator('[data-overview-days="30"]').click();
   await expect(page.locator('[data-overview-days="30"]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('#overview-description')).toContainText('最近 30 天 · 26 轮观测');
+  await expect(page.locator('#overview-chart')).toHaveAttribute('aria-label', /最近 30 天/);
+  await expect(page.locator('#overview-description')).toContainText('26 轮观测');
   const cluster = page.locator('.overview-point.clustered').first();
   const overviewTooltip = page.locator('#overview-tooltip');
   await cluster.focus();
@@ -341,7 +347,7 @@ try {
   await expect(page.locator('#detail-content')).toContainText('Top 3 候选');
   await page.keyboard.press('Escape');
   await page.locator('[data-overview-days="1"]').click();
-  await expect(page.locator('#overview-description')).toContainText('最近 24 小时');
+  await expect(page.locator('#overview-chart')).toHaveAttribute('aria-label', /最近 24 小时/);
   await page.locator('#changes-only').check();
   await expect(page.locator('#timeline')).toContainText('筛选候选 A → 筛选候选 B');
   await expect(page.locator('#timeline')).toContainText('参考库已更新');
