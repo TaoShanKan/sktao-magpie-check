@@ -36,8 +36,7 @@ export class Engine {
     if (!this.store.config(model, other)) this.store.saveConfig({ ...saved, testId: other, enabled: false, intervalMinutes: other === 'milk' ? 30 : null, effort: '', timeoutSeconds: 300, nextAt: null });
     return saved;
   }
-  modelConfigs() {
-    const configs = this.store.configs();
+  modelConfigs(configs = this.store.configs()) {
     return [...new Set(configs.map(c => c.model))].map(model => modelConfig(configs.filter(c => c.model === model)));
   }
   merge(model, sourceType) {
@@ -64,7 +63,12 @@ export class Engine {
     const effort = input.effort ?? (old?.shared ? old.effort : '');
     const efforts = catalogEntry?.efforts || old?.efforts || [];
     if (typeof effort !== 'string' || (effort && !efforts.includes(effort))) throw new HTTPError(400, '该模型不支持所选推理强度');
-    const selectedTests = input.selectedTests ?? (old?.shared ? old.selectedTests : ['milk']);
+    let selectedTests = input.selectedTests ?? (old?.shared ? old.selectedTests : ['milk']);
+    if (Object.hasOwn(input, 'testSelection')) {
+      const selection = input.testSelection;
+      if (Object.hasOwn(input, 'selectedTests') || !selection || typeof selection !== 'object' || Array.isArray(selection) || Object.entries(selection).some(([type, selected]) => !testTypes.includes(type) || typeof selected !== 'boolean')) throw new HTTPError(400, '检测项目修改无效');
+      selectedTests = testTypes.filter(type => selection[type] ?? selectedTests.includes(type));
+    }
     if (!Array.isArray(selectedTests) || selectedTests.some(t => !testTypes.includes(t)) || new Set(selectedTests).size !== selectedTests.length)
       throw new HTTPError(400, '检测项目无效');
     let enabled = input.enabled ?? (old?.shared ? old.enabled : false);

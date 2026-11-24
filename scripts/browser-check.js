@@ -67,6 +67,20 @@ try {
   expect(f.service.store.config('mock/logic-a').effort).toBe('high');
   expect(f.service.store.config('mock/logic-b').intervalMinutes).toBe(30);
   const b = page.locator('[data-model="mock/logic-b"] .config-card');
+  const peer = await browser.newPage();
+  await peer.goto(f.origin); await peer.locator('#tab-settings').click();
+  const other = peer.locator('[data-model="mock/logic-b"] .config-card');
+  await b.locator('[name=intervalMinutes]').fill('55');
+  await other.locator('[name=enabled]').check();
+  await expect(b.locator('[name=enabled]')).toBeChecked({ timeout: 6500 });
+  await expect(b.locator('[name=intervalMinutes]')).toHaveValue('55');
+  let editRequest = page.waitForRequest(request => request.method() === 'PATCH');
+  await b.locator('[name=intervalMinutes]').blur();
+  expect((await editRequest).postDataJSON()).toEqual({ model: 'mock/logic-b', intervalMinutes: 55 });
+  await expect.poll(() => f.service.store.config('mock/logic-b').intervalMinutes).toBe(55);
+  expect(f.service.store.config('mock/logic-b').enabled).toBe(true);
+  await b.locator('[name=intervalMinutes]').fill('30'); await b.locator('[name=intervalMinutes]').blur();
+  await peer.close();
   await b.locator('[name=enabled]').check();
   await expect.poll(() => f.service.store.config('mock/logic-b').enabled).toBe(true);
   await b.locator('[name=enabled]').uncheck();
@@ -76,12 +90,27 @@ try {
   f.service.engine.fingerprint = { run: async snapshot => { fpSnapshot = snapshot; return {}; } };
   await a.locator('[name=selectedTests][value=fingerprint]').check();
   await expect.poll(() => f.service.store.config('mock/logic-a', 'fingerprint').selected).toBe(true);
+  const runWrites = []; const watchWrites = request => { if (request.url().endsWith('/api/model-configs') && request.method() !== 'GET') runWrites.push(request.method()); };
+  page.on('request', watchWrites);
   await a.locator('[data-run]').click();
   await expect.poll(() => f.service.store.list('mock/logic-a').items[0]?.result).toBe('passed');
   await expect.poll(() => f.service.store.list('mock/logic-a', 1, null, null, 'fingerprint').total).toBe(1);
   expect(fpSnapshot).toMatchObject({ effort: 'high', timeoutSeconds: 120, intervalMinutes: 45 });
+  page.off('request', watchWrites); expect(runWrites).toEqual([]);
   await page.getByRole('tab', { name: '历史记录' }).click();
   await chooseModel('mock/logic-a');
+  await expect(page.locator('#records .badge')).toHaveText('✓ 通过');
+  await page.route('**/api/history?*', route => new URL(route.request().url()).searchParams.get('model') === 'mock/logic-b' ? route.fulfill({ status: 503, json: { error: '模拟历史不可用' } }) : route.continue());
+  await chooseModel('mock/logic-b');
+  await expect(page.locator('#history-error')).toContainText('mock/logic-b');
+  await expect(page.locator('#history-summary')).toBeHidden(); await expect(page.locator('#records button')).toBeHidden();
+  await page.unroute('**/api/history?*'); await page.locator('#history-retry').click();
+  await expect(page.locator('#history-error')).toBeHidden(); await expect(page.locator('#records')).toContainText('暂无记录');
+  await f.api('api/model-configs', 'PATCH', { model: 'mock/logic-b', enabled: true });
+  await expect(page.locator('#plan-summary')).toContainText('每 30 分钟', { timeout: 6500 });
+  await page.locator('[data-test=fingerprint]').click(); await expect(page.locator('#plan-summary')).toHaveText('此项未加入定期检测');
+  await f.api('api/model-configs', 'PATCH', { model: 'mock/logic-b', enabled: false });
+  await page.locator('[data-test=milk]').click(); await chooseModel('mock/logic-a');
   await page.locator('#history-model').focus(); await page.keyboard.press('ArrowDown');
   await expect(page.locator('#history-model')).toHaveAccessibleName('监测模型 Logic A');
   await expect(page.locator('#history-model')).toHaveAttribute('aria-expanded', 'true');
@@ -214,7 +243,7 @@ try {
   await expect(fpCard.locator('[name=enabled]')).toBeDisabled();
   await expect.poll(() => f.service.store.config('mock/logic-b', 'fingerprint').selected).toBe(false);
   await fpCard.locator('[name=selectedTests][value=milk]').check();
-  // Autosave errors persist locally and retry the current complete form.
+  // Autosave errors persist locally and retry only outstanding edits.
   await page.route('**/api/model-configs', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '模拟保存失败' }) }));
   await fpCard.locator('[name=intervalMinutes]').fill('180'); await fpCard.locator('[name=intervalMinutes]').blur();
   await expect(fpCard.locator('[data-save-status]')).toContainText('模拟保存失败');
@@ -364,6 +393,24 @@ try {
   await page.setViewportSize({ width: 375, height: 812 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.locator('.fingerprint-overview').screenshot({ path: 'docs/screenshots/fingerprint-overview-mobile.png' });
+  const chart = page.locator('#overview-chart');
+  expect(await chart.evaluate(host => [...host.querySelectorAll('.overview-point')].some(point => {
+    const box = point.getBoundingClientRect(); return box.left >= host.querySelector('.overview-label').getBoundingClientRect().right && box.right <= host.getBoundingClientRect().right;
+  }))).toBe(true);
+  await chart.evaluate(host => { host.scrollLeft = 44; });
+  await page.clock.setFixedTime(new Date());
+  await page.waitForResponse(response => response.url().endsWith('/api/state'));
+  await page.waitForTimeout(150);
+  const reads = []; const countReads = request => { const path = new URL(request.url()).pathname; if (['/api/history','/api/fingerprint-summary','/api/fingerprint-overview'].includes(path)) reads.push(path); };
+  page.on('request', countReads);
+  await page.waitForResponse(response => response.url().endsWith('/api/state'));
+  await page.waitForTimeout(150); expect(reads).toEqual([]);
+  await page.locator('#next').click(); await expect(page.locator('#page-info')).toContainText('第 2');
+  expect(reads).toEqual(['/api/history']); expect(await chart.evaluate(host => host.scrollLeft)).toBe(44);
+  reads.length = 0; await page.locator('[data-overview-days="7"]').click();
+  await expect(chart).toHaveAttribute('aria-label', /最近 7 天/); expect(reads).toEqual(['/api/fingerprint-overview']);
+  await page.locator('[data-overview-days="1"]').click(); await expect(chart).toHaveAttribute('aria-label', /最近 24 小时/);
+  page.off('request', countReads);
   // Distinct partial/error states and SDK events, plus an empty range.
   await page.locator('#history-model').scrollIntoViewIfNeeded();
   const chartNow = Date.now();

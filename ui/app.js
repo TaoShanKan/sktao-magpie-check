@@ -12,8 +12,12 @@
   let testId = 'milk', tab = 'history', selectedModel = '', page = 1, filter = null, detail = null, pollBusy = false, historyVersion = 0;
   let toastTimer, settingsRendered = false, needsAuthReload = false;
   const saves = new Map(), saveTimers = new Map(), heatScroll = new Map();
+  const drafts = new WeakMap(), editing = new WeakSet(), submitting = new Set();
+  let configEpoch = 0;
   let timelineItems = [], groupCandidates = false, changesOnly = false, heatModel = null, heatMarkup = '', timelineMarkup = '', overviewDays = 7, overviewMarkup = '', overviewPoints = new Map();
   let overviewTooltipAnchor = null;
+  const historyParts = new Map();
+  let historyContext = '', displayedQuery = '', displayedKeys = '', chartContext = '', latestChartPoint = '';
   const time = timestamp => timestamp == null ? '—' : new Intl.DateTimeFormat('zh-CN', { timeZone: state.timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(timestamp);
   const duration = value => value == null ? '—' : `${(value / 1000).toFixed(1)} 秒`;
   async function api(path, method = 'GET', data) {
@@ -47,21 +51,23 @@
     if (pollBusy) return;
     pollBusy = true;
     try {
-      const incoming = await api('api/state');
-      if (incoming.apiVersion !== 2 || incoming.uiVersion !== 3 || !Array.isArray(incoming.modelConfigs) || !incoming.bank || incoming.configs.some(c => !testNames[c.testId])) {
+      const epoch = configEpoch, incoming = await api('api/state');
+      if (incoming.apiVersion !== 2 || incoming.uiVersion !== 4 || !Array.isArray(incoming.historyRevisions) || !Array.isArray(incoming.modelConfigs) || !incoming.bank || incoming.configs.some(c => !testNames[c.testId])) {
+        historyVersion++; historyContext = ''; historyParts.clear(); displayedKeys = ''; $('#history-error').hidden = true;
         settingsRendered = false; $('#settings-list').replaceChildren(); $('#history-content').hidden = true; $('#history-summary').hidden = true;
         $('#history-run').disabled = true; $('#history-more').disabled = true; $('#add-model').disabled = true; $('#update-bank').disabled = true;
         $('#bank-status').textContent = '当前仍连接旧版服务，参考库功能尚未启动。';
         throw new Error('页面已更新，后台仍是旧版。请在 Magpie 插件页关闭再开启「模型质量」，然后重新加载页面。');
       }
+      if (epoch !== configEpoch) incoming.modelConfigs = state.modelConfigs;
       state = incoming;
       $('#add-model').disabled = false; $('#history-more').disabled = false;
       $('#notice').hidden = true;
-      renderModelPicker(); updateConfigStatus(); renderBank();
-      if (!settingsRendered) renderSettings();
+      renderModelPicker(); renderSettings(); renderBank();
       if (tab === 'history') await loadHistory();
       if (detail && ['queued', 'running'].includes(detail.state)) {
-        detail = await api(`api/records/${detail.id}`); renderDetail();
+        const id = detail.id, updated = await api(`api/records/${id}`);
+        if (detail?.id === id) { detail = updated; renderDetail(); }
       }
     } catch (e) { notify(`连接检测后台失败：${e.message}`); }
     finally { pollBusy = false; }
@@ -76,14 +82,27 @@
     if ($('#model-options').innerHTML !== markup) $('#model-options').innerHTML = markup;
     picker.disabled = !state.models.length;
     picker.title = current ? `${current.name || current.model}\n${current.model}` : '';
-    const config = state.configs.find(c => c.model === selectedModel && c.testId === testId);
-    const busy = state.active.some(j => j.model === selectedModel && j.testId === testId);
+    const config = state.modelConfigs.find(c => c.model === selectedModel);
+    const busy = submitting.has(selectedModel) || state.active.some(j => j.model === selectedModel && j.testId === testId);
     $('#history-run').disabled = !config || busy;
     $('#history-run').textContent = busy ? '测试进行中…' : `测试${testNames[testId]}`;
-    $('#plan-summary').textContent = !current ? '' : !config ? '仅保留历史' : config.enabled ? `每 ${config.intervalMinutes} 分钟 · 下次 ${time(config.nextAt)}` : '定期检测已暂停';
+    $('#plan-summary').textContent = !current ? '' : !config ? '仅保留历史' : !config.selectedTests?.includes(testId) ? '此项未加入定期检测' : config.enabled ? `每 ${config.intervalMinutes} 分钟 · 下次 ${time(config.nextAt)}` : '定期检测已暂停';
     $('#clear-history').disabled = !selectedModel;
     $('#history-empty').hidden = !!selectedModel;
-    $('#history-content').hidden = !selectedModel;
+    const context = JSON.stringify([selectedModel, testId]);
+    if (historyContext !== context) {
+      historyContext = context; historyVersion++; displayedKeys = ''; displayedQuery = ''; chartContext = ''; historyParts.clear();
+      $('#history-summary').hidden = $('#history-content').hidden = $('#history-error').hidden = true;
+      hideHeatTooltip(); hideOverviewTooltip();
+    }
+  }
+  function historyPart(slot, key, path) {
+    if (historyParts.get(slot)?.key === key) return historyParts.get(slot).promise;
+    const promise = api(path).catch(error => {
+      if (historyParts.get(slot)?.promise === promise) historyParts.delete(slot);
+      throw error;
+    });
+    historyParts.set(slot, { key, promise }); return promise;
   }
   async function loadHistory() {
     if (!selectedModel) { $('#history-summary').hidden = true; return; }
@@ -92,15 +111,30 @@
     if (type === 'fingerprint' && changesOnly) params.set('changes', '1');
     if (filter && type === 'milk') { params.set('day', filter.day); params.set('slot', filter.slot); }
     const days = overviewDays;
-    const [history, overview, distribution] = await Promise.all([api(`api/history?${params}`), api(type === 'milk' ? `api/heatmap?model=${encodeURIComponent(model)}` : `api/fingerprint-summary?model=${encodeURIComponent(model)}`), type === 'fingerprint' ? api(`api/fingerprint-overview?model=${encodeURIComponent(model)}&days=${days}`) : Promise.resolve(null)]);
+    const revision = state.historyRevisions?.find(item => item.model === model && item.testId === type)?.revision ?? 0;
+    const query = `${params}`, listKey = `${revision}:${query}`;
+    const windowKey = `${revision}:${type === 'milk' ? dayOf(Date.now()) : Math.floor(Date.now() / 60000)}`;
+    const chartKey = `${windowKey}:${days}`, keys = JSON.stringify([listKey, windowKey, type === 'milk' ? null : chartKey]);
+    if (keys === displayedKeys && $('#history-error').hidden) return;
+    let history, overview, distribution;
+    try {
+      [history, overview, distribution] = await Promise.all([historyPart('list', listKey, `api/history?${params}`), historyPart('summary', windowKey, `api/${type === 'milk' ? 'heatmap' : 'fingerprint-summary'}?model=${encodeURIComponent(model)}`), type === 'fingerprint' ? historyPart('chart', chartKey, `api/fingerprint-overview?model=${encodeURIComponent(model)}&days=${days}`) : null]);
+    } catch (error) {
+      if (version !== historyVersion) return;
+      if (query !== displayedQuery || chartContext !== JSON.stringify([model, days]) && type === 'fingerprint') $('#history-summary').hidden = $('#history-content').hidden = true;
+      $('#history-error span').textContent = `${model} · ${testNames[type]}：${error.message}`;
+      $('#history-error').hidden = false; $('#history-retry').textContent = needsAuthReload ? '重新加载' : '重试'; return;
+    }
     if (version !== historyVersion || selectedModel !== model || testId !== type || overviewDays !== days) return;
     if (page > 1 && (page - 1) * 20 >= history.total) { page = Math.max(1, Math.ceil(history.total / 20)); return loadHistory(); }
+    $('#history-error').hidden = true; $('#history-content').hidden = false;
     $('#milk-history').hidden = type !== 'milk'; $('#fingerprint-history').hidden = type !== 'fingerprint';
     $('#history-summary').hidden = false;
     const stat = (label, value, cls = '') => `<div class="summary-stat ${cls}"><span>${label}</span><strong>${value}</strong></div>`;
     if (type === 'fingerprint') {
       $('#history-summary').innerHTML = `<div class="summary-range">最近 30 天<span>${time(overview.from)} — ${time(overview.to)}</span></div>${stat('测试轮数', overview.total)}${stat('完整评分', overview.scored)}${stat('部分排名', overview.partial)}${stat('候选变化', overview.changes)}${stat('参考库更新', overview.bankChanges)}`;
-      renderFingerprintOverview(distribution);
+      if (displayedChart !== distribution || chartContext !== JSON.stringify([model, days])) renderFingerprintOverview(distribution);
+      displayedChart = distribution;
       timelineItems = history.items; renderTimeline(timelineItems);
     } else {
       const heatmap = overview;
@@ -127,7 +161,21 @@
     }
     $('#page-info').textContent = `${type === 'fingerprint' && changesOnly ? '变化记录 ' : ''}共 ${history.total} 条 · 第 ${page} / ${Math.max(1, Math.ceil(history.total / 20))} 页`;
     $('#previous').disabled = page <= 1; $('#next').disabled = page * 20 >= history.total;
+    displayedKeys = keys; displayedQuery = query;
   }
+  let displayedChart = null;
+  function revealLatestPoint() {
+    const host = $('#overview-chart'), point = host.querySelector(`[data-overview-point="${CSS.escape(latestChartPoint)}"]`);
+    if (!point || host.scrollWidth <= host.clientWidth) return;
+    const box = host.getBoundingClientRect(), labelWidth = host.querySelector('.overview-label').offsetWidth;
+    host.scrollLeft += point.getBoundingClientRect().left + point.offsetWidth / 2 - (box.left + (host.clientWidth + labelWidth) / 2);
+  }
+  let chartWidth = 0;
+  new ResizeObserver(() => {
+    const host = $('#overview-chart');
+    if (host.clientWidth && chartWidth >= host.scrollWidth && host.clientWidth < host.scrollWidth) revealLatestPoint();
+    if (host.clientWidth) chartWidth = host.clientWidth;
+  }).observe($('#overview-chart'));
   function renderFingerprintOverview(data) {
     const host = $('#overview-chart');
     const candidateKey = r => r.state === 'completed' && ['scored', 'partial'].includes(r.decision) && r.predictionId ? `candidate:${r.predictionId}` : ['queued', 'running'].includes(r.state) ? 'pending' : 'unavailable';
@@ -192,14 +240,17 @@
     }).join('');
     // Cache the latest endpoint so time labels do not churn the entire chart every 3 seconds.
     const signature = JSON.stringify([selectedModel, data.days, Math.floor(data.to / 60000), data.items]);
-    if (overviewMarkup === signature) return;
+    const context = JSON.stringify([selectedModel, overviewDays]), positionLatest = context !== chartContext || !latestChartPoint;
+    if (overviewMarkup === signature && !positionLatest) return;
+    chartContext = context;
     overviewPoints = points;
     overviewMarkup = signature;
     const scroll = host.scrollLeft, active = document.activeElement?.dataset.overviewPoint;
     const focusedTooltip = overviewTooltipAnchor === document.activeElement;
     hideOverviewTooltip();
     host.innerHTML = data.items.length ? `<div class="overview-grid"><div class="overview-axis"><span class="overview-label">候选模型</span><div class="overview-ticks">${ticks.map(t => `<span style="left:${t.x}%">${escape(t.label)}</span>`).join('')}</div></div>${rowMarkup}<div class="overview-row event-row"><div class="overview-label">版本事件</div><div class="overview-track">${eventMarkup || '<span class="no-version-event muted small">范围内无版本变更</span>'}</div></div></div>` : '<div class="empty"><h3>该范围内暂无指纹观测</h3></div>';
-    host.scrollLeft = scroll;
+    latestChartPoint = [...points].find(([key, group]) => !key.startsWith('event:') && group.items.at(-1) === data.items.at(-1))?.[0] || '';
+    if (positionLatest) revealLatestPoint(); else host.scrollLeft = scroll;
     if (active) {
       [...host.querySelectorAll('[data-overview-point]')].find(button => button.dataset.overviewPoint === active)?.focus({ preventScroll: true });
       if (!focusedTooltip) hideOverviewTooltip();
@@ -293,14 +344,26 @@
   function renderSettings() {
     settingsRendered = true;
     $('#catalog-status').textContent = catalogError;
-    $('#settings-list').innerHTML = state.modelConfigs.length ? state.modelConfigs.map(c => `<article class="model-group" data-model="${escape(c.model)}"><div class="section-heading"><div><h3>${escape(c.name)}</h3><div class="model-id">${escape(c.model)}</div></div><button class="plain danger" data-remove>移除</button></div>
-      <section class="config-card" data-config-model="${escape(c.model)}" aria-label="${escape(c.name)}检测设置"><fieldset class="test-selection"><legend class="sr-only">检测项目</legend>${Object.entries(testNames).map(([type, name]) => `<label class="test-choice"><input type="checkbox" name="selectedTests" value="${type}" ${c.selectedTests.includes(type) ? 'checked' : ''}><span><strong>${name}</strong><small>${type === 'milk' ? '每轮 1 条请求' : '每轮最多 3 条请求'}</small></span></label>`).join('')}</fieldset>${sharedFields(c)}</section></article>`).join('') : '<div class="empty"><h2>暂无监测模型</h2></div>';
-    updateConfigStatus(); renderBank();
+    const list = $('#settings-list'), models = new Set(state.modelConfigs.map(config => config.model));
+    for (const group of list.querySelectorAll('[data-model]')) if (!models.has(group.dataset.model)) group.remove();
+    if (!models.size) { if (!list.querySelector('.empty')) list.innerHTML = '<div class="empty"><h2>暂无监测模型</h2></div>'; return; }
+    list.querySelector('.empty')?.remove();
+    for (const c of state.modelConfigs) {
+      if (!list.querySelector(`[data-model="${CSS.escape(c.model)}"]`)) list.insertAdjacentHTML('beforeend', `<article class="model-group" data-model="${escape(c.model)}"><div class="section-heading"><div><h3>${escape(c.name)}</h3><div class="model-id">${escape(c.model)}</div></div><button class="plain danger" data-remove>移除</button></div>
+      <section class="config-card" data-config-model="${escape(c.model)}" aria-label="${escape(c.name)}检测设置"><fieldset class="test-selection"><legend class="sr-only">检测项目</legend>${Object.entries(testNames).map(([type, name]) => `<label class="test-choice"><input type="checkbox" name="selectedTests" value="${type}" ${c.selectedTests.includes(type) ? 'checked' : ''}><span><strong>${name}</strong><small>${type === 'milk' ? '每轮 1 条请求' : '每轮最多 3 条请求'}</small></span></label>`).join('')}</fieldset>${sharedFields(c)}</section></article>`);
+    }
+    updateConfigStatus();
   }
   function updateConfigStatus() {
     for (const card of document.querySelectorAll('.config-card')) {
       const config = state.modelConfigs.find(c => c.model === card.dataset.configModel);
       if (!config?.shared) continue;
+      for (const input of card.querySelectorAll('[name]')) {
+        if (editing.has(input) || drafts.get(card)?.has(input)) continue;
+        if (input.name === 'selectedTests') input.checked = config.selectedTests.includes(input.value);
+        else if (input.type === 'checkbox') input.checked = config[input.name];
+        else if (input.value !== String(config[input.name])) input.value = config[input.name];
+      }
       const selected = [...card.querySelectorAll('[name=selectedTests]:checked')].map(i => i.value);
       const enabled = card.querySelector('[name=enabled]');
       if (!enabled) continue;
@@ -309,35 +372,39 @@
       const active = state.active.filter(j => j.model === config.model);
       card.querySelector('[data-next]').textContent = [!selected.length ? '请选择至少一个检测项目' : config.enabled ? `下次检测 ${time(config.nextAt)}` : '定期检测已暂停', ...active.map(j => `${testNames[j.testId]}${j.state === 'queued' ? '排队中' : '执行中'}`)].join(' · ');
       const run = card.querySelector('[data-run]');
-      run.disabled = !selected.length || active.length > 0;
+      run.disabled = !selected.length || active.length > 0 || submitting.has(config.model);
       run.textContent = active.length ? '检测进行中…' : '立即检测所选项';
     }
   }
-  async function saveCard(card) {
+  async function saveCard(card, changed) {
     const model = card.dataset.configModel, key = model;
     const status = card.querySelector('[data-save-status]');
-    for (const input of card.querySelectorAll('input')) if (!input.reportValidity()) {
-      status.textContent = '未保存：请检查间隔或超时范围'; status.className = 'save-error'; throw new Error(status.textContent);
-    }
-    const selectedTests = [...card.querySelectorAll('[name=selectedTests]:checked')].map(i => i.value);
-    if (!selectedTests.length) card.querySelector('[name=enabled]').checked = false;
-    updateConfigStatus();
-    const data = { model, selectedTests, enabled: card.querySelector('[name=enabled]').checked,
-      intervalMinutes: Number(card.querySelector('[name=intervalMinutes]').value), timeoutSeconds: Number(card.querySelector('[name=timeoutSeconds]').value), effort: card.querySelector('[name=effort]').value };
+    const dirty = drafts.get(card) || new Map(); drafts.set(card, dirty);
+    if (changed) { editing.delete(changed); dirty.set(changed, { value: changed.type === 'checkbox' ? changed.checked : changed.type === 'number' ? Number(changed.value) : changed.value }); }
+    if (!dirty.size) return;
     clearTimeout(saveTimers.get(key)); status.textContent = '正在保存…'; status.className = '';
     const pending = (saves.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
+      const entries = [...dirty]; if (!entries.length || !card.isConnected) return;
       try {
-        const saved = await api('api/model-configs', 'POST', data);
+        const data = { model };
+        for (const [input, draft] of entries) {
+          if (!input.reportValidity()) throw new Error('请检查间隔或超时范围');
+          if (input.name === 'selectedTests') (data.testSelection ||= {})[input.value] = draft.value;
+          else data[input.name] = draft.value;
+        }
+        const saved = await api('api/model-configs', 'PATCH', data);
+        configEpoch++; for (const [input, draft] of entries) if (dirty.get(input) === draft) dirty.delete(input);
         state.modelConfigs = state.modelConfigs.map(c => c.model === model ? saved : c);
-        status.textContent = '已自动保存'; status.className = ''; updateConfigStatus();
+        status.textContent = dirty.size ? '正在保存…' : '已自动保存'; status.className = ''; updateConfigStatus(); renderModelPicker();
         clearTimeout(saveTimers.get(key)); saveTimers.set(key, setTimeout(() => { if (status.textContent === '已自动保存') status.textContent = ''; }, 3500));
       } catch (e) {
         status.textContent = `未保存：${e.message}`; status.className = 'save-error';
         const retry = document.createElement('button'); retry.textContent = '重试保存'; retry.className = 'plain';
-        retry.onclick = action(() => saveCard(card)); status.append(retry); throw e;
+        retry.onclick = () => saveCard(card).catch(() => {}); status.append(retry); throw e;
       }
     });
     saves.set(key, pending);
+    updateConfigStatus();
     try { await pending; } finally { if (saves.get(key) === pending) saves.delete(key); }
   }
   async function loadCatalog() {
@@ -352,7 +419,9 @@
     $('#model-choices').innerHTML = catalogError ? `<p class="muted">${escape(catalogError)}。可点击刷新目录重试。</p>` : models.length ? models.map(m => `<button class="model-choice" data-add="${escape(m.id)}"><span>${escape(m.name)}</span><small>${escape(m.id)}</small></button>`).join('') : '<p class="muted">没有匹配的可添加模型。</p>';
   }
   async function openDetail(id) {
-    detail = await api(`api/records/${id}`); $('#detail-content').replaceChildren(); renderDetail(); $('#detail-dialog').showModal(); $('#detail-content').scrollTop = 0;
+    const context = historyContext, record = await api(`api/records/${id}`);
+    if (context !== historyContext || tab !== 'history') return;
+    detail = record; $('#detail-content').replaceChildren(); renderDetail(); $('#detail-dialog').showModal(); $('#detail-content').scrollTop = 0;
   }
   function renderDetail() {
     const r = detail, s = r.snapshot, terminal = !['queued', 'running'].includes(r.state);
@@ -379,7 +448,7 @@
     $('#save-correction').disabled = true; $('#restore-correction').disabled = true;
     try {
       detail = await api(`api/records/${id}/correction`, 'POST', { result, note });
-      renderDetail(); $('#correction-status').textContent = result === null ? '已恢复自动判断' : '人工结果已保存'; await loadHistory();
+      renderDetail(); $('#correction-status').textContent = result === null ? '已恢复自动判断' : '人工结果已保存'; historyParts.clear(); displayedKeys = ''; await loadHistory();
     } catch (e) { $('#save-correction').disabled = false; $('#restore-correction').disabled = !detail.corrected; $('#correction-status').textContent = `保存失败：${e.message}`; }
   }
   function confirm(title, text, label) {
@@ -425,9 +494,14 @@
     }
     const card = button?.closest('.config-card');
     if (card && button.hasAttribute('data-run')) {
-      await saveCard(card); button.disabled = true; button.textContent = '正在提交…';
-      try { await api('api/run-selected', 'POST', { model: card.dataset.configModel }); toast('所选检测已提交'); }
-      finally { await refresh(); }
+      const model = card.dataset.configModel;
+      if (submitting.has(model)) return;
+      submitting.add(model); button.disabled = true; button.textContent = '正在提交…';
+      try {
+        if (saves.has(model)) { try { await saves.get(model); } catch { return; } }
+        if (drafts.get(card)?.size) { card.querySelector('[data-save-status] button')?.focus(); return; }
+        await api('api/run-selected', 'POST', { model }); toast('所选检测已提交');
+      } finally { submitting.delete(model); await refresh(); updateConfigStatus(); }
       return;
     }
     const group = button?.closest('.model-group');
@@ -444,7 +518,9 @@
     event.preventDefault(); const next = event.key === 'Home' ? 'history' : event.key === 'End' ? 'settings' : tab === 'history' ? 'settings' : 'history';
     switchTab(next); $(`#tab-${next}`).focus();
   });
-  $('#settings-list').addEventListener('change', action(event => saveCard(event.target.closest('.config-card'))));
+  $('#settings-list').addEventListener('input', event => { if (event.target.type === 'number') editing.add(event.target); });
+  $('#settings-list').addEventListener('focusout', event => editing.delete(event.target));
+  $('#settings-list').addEventListener('change', event => { void saveCard(event.target.closest('.config-card'), event.target).catch(() => {}); });
   $('#model-menu').addEventListener('beforetoggle', event => {
     if (event.newState !== 'open') return;
     const rect = $('#history-model').getBoundingClientRect(), menu = $('#model-menu');
@@ -485,6 +561,7 @@
     if (!(event.target instanceof Node && menu.contains(event.target))) menu.hidePopover();
   }, true);
   $('#history-run').onclick = action(() => run(selectedModel));
+  $('#history-retry').onclick = action(() => needsAuthReload ? location.reload() : loadHistory());
   $('#previous').onclick = action(async () => { page--; await loadHistory(); }); $('#next').onclick = action(async () => { page++; await loadHistory(); });
   $('#reset-filter').onclick = action(async () => { filter = null; page = 1; await loadHistory(); });
   $('#clear-history').onclick = action(async () => {

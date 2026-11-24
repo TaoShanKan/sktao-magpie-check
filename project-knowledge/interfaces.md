@@ -98,3 +98,11 @@ POST api/model-configs 接收 model 与可选 selectedTests、enabled、interval
 POST api/run-selected 接收 {model}，以事务生成所选项的记录，返回 202 {items:[{id,model,testId,state}]}。任意该模型任务未完成则 409；无选择则 400，均无部分入队。历史页 POST api/run 保留单类型测试。
 
 SQLite 仍为 v2，沿用 configurations 的两行及 JSON：shared 标记、selected 测试项选择、automaticEnabled 总开关。enabled=selected&&automaticEnabled，所选启用项 nextAt 相同。不改 records、判定版本或历史快照。state.active 新增 state=queued|running。旧参数转换优先唯一启用项，否则采用奶牛；全部暂停预选奶牛且保持暂停。
+
+## 界面一致性与增量读取（0.5.1）
+
+`apiVersion=2, uiVersion=4`。`GET api/state` 增加 `historyRevisions: [{model,testId,revision}]`，缺项视为 0。修订号只在同一个服务实例内比较，不是记录数或历史版本。服务拥有者连接的 SQLite TEMP 触发器随记录增删改在同一事务内更新计数，回滚不产生变化；不增加持久表，也不迁移或重判历史。服务重启后页面需要新令牌。
+
+`PATCH api/model-configs` 仅修改已有模型（移除后返回 404），接受 `{model, ...改动字段}`；`testSelection: {milk?: boolean, fingerprint?: boolean}` 只修改指定复选项，不能与替换整个选择的 `selectedTests` 同用。保留 POST 新增和旧版接口。零选择仍原子关闭定期计划。多个窗口修改同一字段时，以服务端后提交的值为准。
+
+UI 将列表、统计、分布图分开缓存，切换上下文丢弃旧缓存；修订号变化刷新同模型同类型的数据。奶牛日期窗在服务日期换日时更新，指纹滚动区间每分钟更新，不依赖记录写入才推进。

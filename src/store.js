@@ -63,6 +63,12 @@ export class Store {
         CREATE INDEX records_type_time ON records(model,test_id,started_at DESC);
         PRAGMA user_version=2;`);
     }).immediate();
+    this.db.exec(`CREATE TEMP TABLE history_revisions(model TEXT, test_id TEXT, revision INTEGER NOT NULL, PRIMARY KEY(model,test_id))`);
+    for (const [event, row] of [['INSERT', 'NEW'], ['UPDATE', 'NEW'], ['DELETE', 'OLD']]) {
+      this.db.exec(`CREATE TEMP TRIGGER revision_${event} AFTER ${event} ON main.records BEGIN
+        INSERT INTO history_revisions VALUES(${row}.model,${row}.test_id,1)
+        ON CONFLICT(model,test_id) DO UPDATE SET revision=revision+1; END`);
+    }
   }
   acquire(token) {
     this.db.transaction(() => {
@@ -89,9 +95,17 @@ export class Store {
     return this.db.transaction(() => configs.map(config => this.saveConfig(config)))();
   }
   deleteConfig(model) { this.db.transaction(() => this.db.query('DELETE FROM configurations WHERE model=?').run(model))(); }
-  historyModels() {
-    const models = new Map(this.configs().map(c => [c.model, { model: c.model, name: c.name, removed: false }]));
-    for (const r of this.db.query('SELECT model,name FROM records GROUP BY model ORDER BY MAX(started_at) DESC').all())
+  historyRevisions() {
+    return this.db.query('SELECT model,test_id AS testId,revision FROM history_revisions ORDER BY model,test_id').all();
+  }
+  historyModels(configs = this.configs(), revisions = this.historyRevisions()) {
+    const models = new Map(configs.map(c => [c.model, { model: c.model, name: c.name, removed: false }]));
+    const key = JSON.stringify(revisions);
+    if (this.historyModelKey !== key) {
+      this.recordModels = this.db.query('SELECT model,name FROM records GROUP BY model ORDER BY MAX(started_at) DESC').all();
+      this.historyModelKey = key;
+    }
+    for (const r of this.recordModels)
       if (!models.has(r.model)) models.set(r.model, { ...r, removed: true });
     return [...models.values()];
   }
@@ -164,7 +178,10 @@ export class Store {
   }
   clear(model, type = 'milk') {
     // Only terminal rows are removed. In-flight work is a new result once it completes.
-    return this.db.transaction(() => this.db.query("DELETE FROM records WHERE model=? AND test_id=? AND state NOT IN ('queued','running')").run(model, testId(type)).changes)();
+    return this.db.transaction(() => {
+      this.db.query("DELETE FROM records WHERE model=? AND test_id=? AND state NOT IN ('queued','running')").run(model, testId(type));
+      return this.db.query('SELECT changes() AS deleted').get().deleted;
+    })();
   }
   repair(now = Date.now()) {
     this.db.query(`UPDATE records SET state='interrupted',finished_at=?,duration=MAX(0,?-started_at),call_error='插件服务重启，测试已中断',fingerprint=CASE WHEN fingerprint IS NOT NULL THEN json_set(fingerprint,'$.analysis',NULL,'$.error','插件服务重启，本轮不评分') ELSE NULL END WHERE state IN ('queued','running')`).run(now, now);

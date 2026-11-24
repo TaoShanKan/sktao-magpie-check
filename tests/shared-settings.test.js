@@ -119,3 +119,15 @@ test('model API exposes shared state, validates atomic updates and runs only sel
   expect((await f.api('api/state')).modelConfigs[0]).toMatchObject({ shared: true, selectedTests: ['milk'] });
   await f.restart(); expect((await f.api('api/state')).modelConfigs[0].selectedTests).toEqual(['milk']);
 });
+
+test('independent edits preserve other fields and cannot recreate a removed model', async () => {
+  const fixture = await serverFixture(); resources.push(() => fixture.close());
+  const model = 'mock/logic-a'; await fixture.api('api/model-configs', 'POST', { model });
+  const patch = fields => fixture.api('api/model-configs', 'PATCH', { model, ...fields });
+  await patch({ enabled: true }); await patch({ testSelection: { fingerprint: true } });
+  expect(await patch({ intervalMinutes: 45 })).toMatchObject({ enabled: true, selectedTests: ['milk', 'fingerprint'] });
+  expect(await patch({ testSelection: { milk: false } })).toMatchObject({ enabled: true, selectedTests: ['fingerprint'] });
+  expect(await patch({ testSelection: { fingerprint: false } })).toMatchObject({ enabled: false, selectedTests: [] });
+  await fixture.api(`api/configs/${encodeURIComponent(model)}`, 'DELETE');
+  expect((await fixture.response('api/model-configs', 'PATCH', { model, effort: 'high' })).status).toBe(404);
+});

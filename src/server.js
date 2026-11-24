@@ -13,7 +13,7 @@ export function identity(opt) {
   mkdirSync(opt.dataDir, { recursive: true, mode: 0o700 });
   const path = join(opt.dataDir, '.service-secret');
   try { writeFileSync(path, randomBytes(32), { flag: 'wx', mode: 0o600 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
-  return { app: 'sktao-magpie-check', version: '0.5.0', configuration: createHmac('sha256', readFileSync(path)).update(JSON.stringify(opt)).digest('hex') };
+  return { app: 'sktao-magpie-check', version: '0.5.1', configuration: createHmac('sha256', readFileSync(path)).update(JSON.stringify(opt)).digest('hex') };
 }
 function equal(a, b) { return Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
 async function body(req) {
@@ -48,7 +48,7 @@ export async function startServer(input = {}, dependencies = {}) {
       const origin = req.headers.get('origin');
       if (origin && origin !== 'null' && origin !== `http://${host}`) return json({ error: 'Invalid origin' }, 403);
       const api = url.pathname.startsWith('/api/');
-      const cors = api ? { ...(origin ? { 'access-control-allow-origin': origin } : {}), vary: 'Origin', 'access-control-allow-headers': 'Authorization, Content-Type', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS' } : {};
+      const cors = api ? { ...(origin ? { 'access-control-allow-origin': origin } : {}), vary: 'Origin', 'access-control-allow-headers': 'Authorization, Content-Type', 'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS' } : {};
       if (api && req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       try {
         await initialized;
@@ -58,16 +58,18 @@ export async function startServer(input = {}, dependencies = {}) {
           const method = req.method, path = url.pathname;
           let result, status = 200, match;
           if (path === '/api/state' && method === 'GET') {
-            result = { apiVersion: 2, uiVersion: 3, modelConfigs: engine.modelConfigs(), serviceVersion: serviceIdentity.version, configs: store.configs(), models: store.historyModels(), active: [...engine.jobs.values()].map(j => ({ model: j.model, testId: j.testId, id: j.id, state: j.promise ? 'running' : 'queued' })), timeZone: opt.timeZone, bank: bank.status() };
+            const configs = store.configs(), historyRevisions = store.historyRevisions();
+            result = { apiVersion: 2, uiVersion: 4, historyRevisions, modelConfigs: engine.modelConfigs(configs), serviceVersion: serviceIdentity.version, configs, models: store.historyModels(configs, historyRevisions), active: [...engine.jobs.values()].map(j => ({ model: j.model, testId: j.testId, id: j.id, state: j.promise ? 'running' : 'queued' })), timeZone: opt.timeZone, bank: bank.status() };
           } else if (path === '/api/bank' && method === 'GET') {
             result = bank.status();
           } else if (path === '/api/bank/update' && method === 'POST') {
             await bank.refresh(); result = bank.status();
           } else if (path === '/api/models' && method === 'GET') {
             catalog = await gateway.models(); result = catalog;
-          } else if (path === '/api/model-configs' && method === 'POST') {
+          } else if (path === '/api/model-configs' && (method === 'POST' || method === 'PATCH')) {
             const data = await body(req);
             if (typeof data.model !== 'string' || !data.model.length || data.model.length > 500) throw new HTTPError(400, '模型 ID 无效');
+            if (method === 'PATCH' && !store.config(data.model)) throw new HTTPError(404, '模型配置已移除');
             if (!store.config(data.model) && !catalog.some(m => m.id === data.model)) catalog = await gateway.models();
             result = engine.saveModel(data.model, data, catalog.find(m => m.id === data.model));
           } else if (path === '/api/run-selected' && method === 'POST') {

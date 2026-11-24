@@ -1,6 +1,6 @@
 {
   "name": "sktao-magpie-check",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "license": "MIT",
   "description": "Local milk reasoning and model fingerprint monitoring with shared per-model settings.",

@@ -78,7 +78,7 @@ test('two services cannot schedule against the same database and managed hosts s
 
 test('UI history capabilities expose bounded summaries and apply change filters server-side', async () => {
   const f = await setup();
-  expect((await f.api('api/state')).uiVersion).toBe(3);
+  expect((await f.api('api/state')).uiVersion).toBe(4);
   let previous;
   for (let i = 0; i < 25; i++) {
     const prediction = i === 0 ? 'A' : 'B';
@@ -92,6 +92,24 @@ test('UI history capabilities expose bounded summaries and apply change filters 
   const summary = await f.api('api/fingerprint-summary?model=mock%2Flogic-a');
   expect(summary.total).toBe(25); expect(summary.changes).toBe(1);
   expect((await f.api('api/fingerprint-summary?model=missing')).total).toBe(0);
+});
+
+test('history revisions track only committed changes to the affected model and test', async () => {
+  const fixture = await setup(), store = fixture.service.store;
+  const revisions = async () => (await fixture.api('api/state')).historyRevisions;
+  expect(await revisions()).toEqual([]);
+  const record = store.create({ model: 'mock/a', name: 'A' }, 'manual');
+  const revision = async () => (await revisions()).find(row => row.model === 'mock/a' && row.testId === 'milk').revision;
+  const created = await revision(); store.start(record.id); expect(await revision()).toBeGreaterThan(created);
+  store.finish(record.id, { automatic: { result: 'passed' } }); const finished = await revision();
+  store.correct(record.id, 'failed'); expect(await revision()).toBeGreaterThan(finished);
+  const before = await revisions();
+  expect(() => store.db.transaction(() => { store.clear('mock/a'); throw Error('rollback'); })()).toThrow('rollback');
+  expect(await revisions()).toEqual(before);
+  const fp = store.create({ model: 'mock/b', name: 'B', testId: 'fingerprint' }, 'manual');
+  const fpCreated = await revisions(); store.evidence(fp.id, { samples: [] });
+  const sampled = await revisions(); expect(sampled[1].revision).toBeGreaterThan(fpCreated[1].revision); expect(sampled[0]).toEqual(before[0]);
+  expect(store.clear('mock/a')).toBe(1); expect(await revision()).toBeGreaterThan(before[0].revision);
 });
 
 test('fingerprint overview validates supported windows and exposes only summary points', async () => {
